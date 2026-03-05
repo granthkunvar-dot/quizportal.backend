@@ -89,7 +89,11 @@ const startServer = async () => {
   });
 };
 
-startServer().catch((err) => {
-  console.error("Failed to start server:", err.message);
-  process.exit(1);
-});
+if (process.env.NODE_ENV !== 'production') {
+  startServer().catch((err) => {
+    console.error("Failed to start server:", err.message);
+    process.exit(1);
+  });
+}
+
+module.exports = app;
