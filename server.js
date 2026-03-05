@@ -1,37 +1,55 @@
-'use strict';
+const express = require('express');
+const cors = require('cors');
+const http = require('http');
+const socketIo = require('socket.io');
+const db = require('./db'); // Your database connection file
+require('dotenv').config();
 
-const net = require('net');
-const EventEmitter = require('events').EventEmitter;
+// 1. Initialize Express and Server
+const app = express();
+const server = http.createServer(app);
 
-const Connection = require('./connection');
-const ConnectionConfig = require('./connection_config');
+// 2. Configure Socket.io with CORS for Netlify
+const io = socketIo(server, {
+    cors: {
+        origin: [process.env.FRONTEND_URL, "http://localhost:5173"],
+        methods: ["GET", "POST"]
+    }
+});
 
-// TODO: inherit Server from net.Server
-class Server extends EventEmitter {
-  constructor() {
-    super();
-    this.connections = [];
-    this._server = net.createServer(this._handleConnection.bind(this));
-  }
+// 3. Middleware
+app.use(cors({ origin: process.env.FRONTEND_URL || "*" }));
+app.use(express.json());
 
-  _handleConnection(socket) {
-    const connectionConfig = new ConnectionConfig({
-      stream: socket,
-      isServer: true,
+// 4. Import your newly organized Routes
+const authRoutes = require('./routes/authRoutes');
+const quizRoutes = require('./routes/quizRoutes');
+const adminRoutes = require('./routes/adminRoutes');
+
+// 5. Use Routes
+app.use('/api/auth', authRoutes);
+app.use('/api/quizzes', quizRoutes);
+app.use('/api/admin', adminRoutes);
+
+// 6. Basic Health Check for Vercel
+app.get('/', (req, res) => {
+    res.json({ message: "QuizPortal API is Live!", status: "Connected" });
+});
+
+// 7. Socket.io Logic
+io.on('connection', (socket) => {
+    console.log('User connected to chat');
+    socket.on('disconnect', () => console.log('User disconnected'));
+});
+
+// 8. Vercel Export (Crucial)
+// This allows Vercel to treat the app as a single serverless function
+module.exports = app;
+
+// 9. Local Development Start
+if (process.env.NODE_ENV !== 'production') {
+    const PORT = process.env.PORT || 5000;
+    server.listen(PORT, () => {
+        console.log(`Server running locally on port ${PORT}`);
     });
-    const connection = new Connection({ config: connectionConfig });
-    this.emit('connection', connection);
-  }
-
-  listen(port) {
-    this._port = port;
-    this._server.listen.apply(this._server, arguments);
-    return this;
-  }
-
-  close(cb) {
-    this._server.close(cb);
-  }
 }
-
-module.exports = Server;
