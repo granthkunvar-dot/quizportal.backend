@@ -1,6 +1,0 @@
-Cannot find module 'jsonwebtoken'
-Require stack:
-- C:\Users\grant\OneDrive\Desktop\SE Project\backend\src\middlewares\adminAuth.js
-- C:\Users\grant\OneDrive\Desktop\SE Project\backend\src\routes\adminRoutes.js
-- C:\Users\grant\OneDrive\Desktop\SE Project\backend\src\server.js
-- C:\Users\grant\OneDrive\Desktop\SE Project\backend\[eval]
