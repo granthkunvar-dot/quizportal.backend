@@ -1,5 +1,4 @@
 const { pool } = require("../db");
-const { quiz: quizConfig } = require("../config/env");
 const { closeSeasonIfExpired, takeDailyRankSnapshot } = require("../services/seasonService");
 const { evaluateAchievements } = require("../services/achievementService");
 
@@ -12,7 +11,9 @@ const parsePositiveInt = (value) => {
 };
 
 const buildDeadline = (startedAt) => {
-  const durationMs = quizConfig.timeLimitMinutes * 60 * 1000;
+// This sets a default of 30 minutes if you don't add a Vercel variable
+const timeLimit = process.env.QUIZ_TIME_LIMIT || 30; 
+const durationMs = timeLimit * 60 * 1000;  
   return new Date(new Date(startedAt).getTime() + durationMs);
 };
 
