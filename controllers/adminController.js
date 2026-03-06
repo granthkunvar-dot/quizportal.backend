@@ -1,4 +1,4 @@
-const { pool } = require("../config/db");
+const { pool } = require("../db");
 const { parseQuizText } = require("../services/quizParserService");
 
 // Helper to log admin actions
