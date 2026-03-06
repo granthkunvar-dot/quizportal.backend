@@ -1,4 +1,4 @@
-const { pool } = require("../config/db");
+const { pool } = require("../db");
 
 const searchUsers = async (req, res) => {
     try {
@@ -39,3 +39,4 @@ const searchUsers = async (req, res) => {
 module.exports = {
     searchUsers
 };
+
