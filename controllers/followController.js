@@ -1,4 +1,4 @@
-const { pool } = require("../config/db");
+const { pool } = require("../db");
 
 // Follow a user
 const followUser = async (req, res) => {
@@ -177,3 +177,4 @@ module.exports = {
     getFollowing,
     getPublicProfile
 };
+
