@@ -1,13 +1,16 @@
 const express = require("express");
 const router = express.Router();
-const { requireAuth, requireRole } = require('../middlewares/authMiddleware');
-const { requireAdmin, requireSuperAdmin } = require("../middlewares/adminAuth");
+
+// 1. Fixed Middleware paths (Removed the 's' and matched your actual folders)
+const { requireAuth, requireRole } = require('../middleware/authMiddleware');
+const { requireAdmin, requireSuperAdmin } = require("../routes/adminAuth"); 
 const adminController = require("../controllers/adminController");
+
+// 2. Fixed asyncHandler path (Pointed it to the root or middleware folder where it actually lives)
+const asyncHandler = require("../middleware/asyncHandler");
 
 router.use(requireAuth);
 router.use(requireAdmin);
-
-const asyncHandler = require("../utils/asyncHandler");
 
 // Analytics
 router.get("/analytics/overview", asyncHandler(adminController.getAnalyticsOverview));
