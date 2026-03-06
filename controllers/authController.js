@@ -1,5 +1,5 @@
 const bcrypt = require("bcrypt");
-const { pool } = require("../config/db");
+const { pool } = require("../db");
 const { session: sessionConfig } = require("../config/env");
 
 const SALT_ROUNDS = 10;
