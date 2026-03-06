@@ -1,4 +1,4 @@
-const { pool } = require("../config/db");
+const { pool } = require("../db");
 const { closeSeasonIfExpired } = require("../services/seasonService");
 
 const getProfile = async (req, res) => {
@@ -390,3 +390,4 @@ module.exports = {
     getLiveDashboardStats,
     updateProfile
 };
+
