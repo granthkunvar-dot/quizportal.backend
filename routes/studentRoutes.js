@@ -1,13 +1,14 @@
 const express = require("express");
-const asyncHandler = require("../utils/asyncHandler");
-const { requireAuth, requireRole } = require("../middlewares/authMiddleware");
+// Fixed paths for middleware and controllers
+const asyncHandler = require("../middleware/asyncHandler");
+const { requireAuth, requireRole } = require("../middleware/authMiddleware");
 const { listAvailableQuizzes, getQuizDetails, startQuiz, submitQuiz } = require("../controllers/studentController");
 const { getProfile, getLiveDashboardStats, updateProfile } = require("../controllers/profileController");
 const multer = require("multer");
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 2 * 1024 * 1024 }, // 2MB max physical limits
+  limits: { fileSize: 2 * 1024 * 1024 }, 
   fileFilter: (req, file, cb) => {
     if (file.mimetype.startsWith("image/")) {
       cb(null, true);
