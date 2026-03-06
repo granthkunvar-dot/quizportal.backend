@@ -1,9 +1,7 @@
 const bcrypt = require("bcrypt");
 const { pool } = require("../db");
-const { session: sessionConfig } = require("../config/env");
 
 const SALT_ROUNDS = 10;
-
 const normalizeEmail = (email) => String(email || "").trim().toLowerCase();
 
 /* ================= REGISTER ================= */
@@ -11,17 +9,10 @@ const register = async (req, res) => {
   try {
     const { name, email, password, displayName } = req.body;
 
-    if (!name || !name.trim())
-      return res.status(400).json({ message: "Name is required" });
-
-    if (!email || !email.trim())
-      return res.status(400).json({ message: "Email is required" });
-
-    if (!password || password.length < 6)
-      return res.status(400).json({ message: "Password must be at least 6 characters" });
-
-    if (!displayName || !displayName.trim())
-      return res.status(400).json({ message: "Display Name is required" });
+    if (!name || !name.trim()) return res.status(400).json({ message: "Name is required" });
+    if (!email || !email.trim()) return res.status(400).json({ message: "Email is required" });
+    if (!password || password.length < 6) return res.status(400).json({ message: "Password must be at least 6 characters" });
+    if (!displayName || !displayName.trim()) return res.status(400).json({ message: "Display Name is required" });
 
     const cleanDisplayName = displayName.trim();
     const displayNameRegex = /^[a-zA-Z0-9_ ]{3,30}$/;
@@ -34,28 +25,17 @@ const register = async (req, res) => {
 
     const normalizedEmail = normalizeEmail(email);
 
-    const [existingEmail] = await pool.execute(
-      "SELECT user_id FROM users WHERE email = ?",
-      [normalizedEmail]
-    );
+    const [existingEmail] = await pool.execute("SELECT user_id FROM users WHERE email = ?", [normalizedEmail]);
+    if (existingEmail.length > 0) return res.status(409).json({ message: "Email already exists" });
 
-    if (existingEmail.length > 0)
-      return res.status(409).json({ message: "Email already exists" });
-
-    const [existingDisplay] = await pool.execute(
-      "SELECT user_id FROM users WHERE LOWER(display_name) = LOWER(?)",
-      [cleanDisplayName]
-    );
-
-    if (existingDisplay.length > 0)
-      return res.status(409).json({ message: "Display Name already taken" });
+    const [existingDisplay] = await pool.execute("SELECT user_id FROM users WHERE LOWER(display_name) = LOWER(?)", [cleanDisplayName]);
+    if (existingDisplay.length > 0) return res.status(409).json({ message: "Display Name already taken" });
 
     const hashed = await bcrypt.hash(password, SALT_ROUNDS);
     console.log(`[AUTH-REGISTER] Hashing password for email: ${normalizedEmail}`);
 
     const [result] = await pool.execute(
-      `INSERT INTO users (full_name, email, password_hash, display_name, role)
-       VALUES (?, ?, ?, ?, 'student')`,
+      `INSERT INTO users (full_name, email, password_hash, display_name, role) VALUES (?, ?, ?, ?, 'student')`,
       [name.trim(), normalizedEmail, hashed, cleanDisplayName]
     );
     console.log(`[AUTH-REGISTER] User inserted with ID: ${result.insertId}`);
@@ -70,10 +50,7 @@ const register = async (req, res) => {
 
     req.session.user = user;
 
-    res.status(201).json({
-      message: "Account created successfully",
-      user
-    });
+    res.status(201).json({ message: "Account created successfully", user });
   } catch (error) {
     console.error("AUTH ERROR:", error);
     res.status(500).json({ message: error.message || "Internal server error" });
@@ -88,34 +65,22 @@ const login = async (req, res) => {
 
     console.log(`[AUTH-LOGIN] Attempt for email: ${email}`);
 
-    if (!email || !password) {
-      console.log(`[AUTH-LOGIN] Missing email or password payload`);
-      return res.status(400).json({ message: "Email and password required" });
-    }
+    if (!email || !password) return res.status(400).json({ message: "Email and password required" });
 
     const [rows] = await pool.execute(
-      `SELECT user_id, full_name, display_name, email, password_hash, role, status
-       FROM users WHERE email = ? LIMIT 1`,
+      `SELECT user_id, full_name, display_name, email, password_hash, role, status FROM users WHERE email = ? LIMIT 1`,
       [email]
     );
 
-    console.log(`[AUTH-LOGIN] User Found in DB: ${rows.length > 0}`);
-
-    if (rows.length === 0)
-      return res.status(401).json({ message: "Invalid credentials" });
+    if (rows.length === 0) return res.status(401).json({ message: "Invalid credentials" });
 
     const userDb = rows[0];
 
-    if (userDb.status === 'suspended') {
-      console.log(`[AUTH-LOGIN] Account suspended`);
-      return res.status(403).json({ message: "Account suspended. Please contact administration." });
-    }
+    if (userDb.status === 'suspended') return res.status(403).json({ message: "Account suspended." });
 
     const match = await bcrypt.compare(password, userDb.password_hash);
-    console.log(`[AUTH-LOGIN] Bcrypt Match Result: ${match}`);
-
-    if (!match)
-      return res.status(401).json({ message: "Invalid credentials" });
+    
+    if (!match) return res.status(401).json({ message: "Invalid credentials" });
 
     const user = {
       userId: userDb.user_id,
@@ -127,10 +92,7 @@ const login = async (req, res) => {
 
     req.session.user = user;
 
-    res.status(200).json({
-      message: "Login successful",
-      user
-    });
+    res.status(200).json({ message: "Login successful", user });
   } catch (error) {
     console.error("AUTH ERROR:", error);
     res.status(500).json({ message: error.message || "Internal server error" });
@@ -142,7 +104,8 @@ const logout = async (req, res) => {
   if (!req.session) return res.json({ message: "Logged out" });
 
   req.session.destroy(() => {
-    res.clearCookie(sessionConfig.name);
+    // Vercel handles cookies natively via the express-session middleware in server.js
+    res.clearCookie('connect.sid'); // Fallback default name
     res.json({ message: "Logout successful" });
   });
 };
