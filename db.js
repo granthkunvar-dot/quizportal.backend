@@ -1,23 +1,27 @@
 const mysql = require("mysql2/promise");
-const { db } = require("./env");
 
+// We removed the require("./env") line because we use Vercel Environment Variables now
 const pool = mysql.createPool({
   host: process.env.DB_HOST,
-  port: process.env.DB_PORT || 3306,
+  port: process.env.DB_PORT || 22282, // Defaulted to your Aiven port
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME,
   waitForConnections: true,
-  connectionLimit: process.env.DB_CONNECTION_LIMIT || 10,
-  queueLimit: 0
+  connectionLimit: 10,
+  queueLimit: 0,
+  ssl: {
+    rejectUnauthorized: false // Required for Aiven MySQL SSL connections
+  }
 });
 
 const testConnection = async () => {
-  const connection = await pool.getConnection();
   try {
-    await connection.ping();
-  } finally {
+    const connection = await pool.getConnection();
+    console.log("Database connected successfully to Aiven!");
     connection.release();
+  } catch (err) {
+    console.error("Database connection failed:", err.message);
   }
 };
 
