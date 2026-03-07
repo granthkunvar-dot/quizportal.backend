@@ -1,4 +1,4 @@
-const { pool } = require("../config/db");
+const { pool } = require("../db");
 
 const TITLES = [
     "Aura Farmer",    // Rank 1
@@ -259,3 +259,4 @@ module.exports = {
     closeSeasonIfExpired,
     takeDailyRankSnapshot
 };
+
