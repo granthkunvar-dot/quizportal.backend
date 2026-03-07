@@ -18,13 +18,13 @@ const io = socketIo(server, {
 app.use(cors({ origin: process.env.FRONTEND_URL || "*" }));
 app.use(express.json());
 
-// 1. Import Routes (Only the files that actually exist!)
+// 1. Import Routes (Only the REAL router files)
 const authRoutes = require('./routes/authRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const studentRoutes = require('./routes/studentRoutes');
 const leaderboardRoutes = require('./routes/leaderboardRoutes');
 
-// 2. Use Routes
+// 2. Use Routes (Removed the broken adminAuth route!)
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/student', studentRoutes); 
