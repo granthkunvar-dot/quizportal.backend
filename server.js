@@ -21,13 +21,11 @@ app.use(express.json());
 
 // 4. Import Routes (Updated for your new folder structure)
 const authRoutes = require('./routes/authRoutes');
-const quizRoutes = require('./routes/quizRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const adminAuth = require('./routes/adminAuth'); // Added this because you moved it to /routes
 
 // 5. Use Routes
 app.use('/api/auth', authRoutes);
-app.use('/api/quizzes', quizRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/admin/auth', adminAuth); // Dedicated path for Admin login
 
