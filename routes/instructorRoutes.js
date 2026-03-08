@@ -1,6 +1,6 @@
 const express = require("express");
 const asyncHandler = require("../utils/asyncHandler");
-const { requireAuth, requireRole } = require("../middlewares/authMiddleware");
+const { requireAuth, requireRole } = require("../middleware/authMiddleware");
 const {
   createQuiz,
   addQuestion,
