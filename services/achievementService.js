@@ -1,4 +1,4 @@
-const { pool } = require("../config/db");
+const  pool  = require("../config/db");
 
 /**
  * Validates and unlocks achievements for a student based on standard criteria
@@ -135,3 +135,4 @@ const evaluateAchievements = async (studentId, connection) => {
 module.exports = {
     evaluateAchievements
 };
+
