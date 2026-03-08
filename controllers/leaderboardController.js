@@ -1,4 +1,4 @@
-const { pool } = require("../db");
+const { pool } = require("../config/db");
 const { closeSeasonIfExpired } = require("../services/seasonService");
 
 const getGlobalLeaderboard = async (req, res) => {
@@ -117,4 +117,5 @@ module.exports = {
     getGlobalLeaderboard,
     getCategoryLeaderboard
 };
+
 
