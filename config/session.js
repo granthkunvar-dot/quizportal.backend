@@ -19,8 +19,8 @@ const sessionStore = new MySQLStore(options);
 
 const sessionMiddleware = session({
   name: "quizportal.sid",
-  secret: process.env.SESSION_SECRET,
-
+  secret: process.env.SESSION_SECRET || "dev-secret",
+  
   store: sessionStore,
 
   resave: false,
