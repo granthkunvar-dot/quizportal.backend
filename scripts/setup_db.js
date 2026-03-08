@@ -1,4 +1,4 @@
-const { pool } = require("./src/config/db");
+const pool = require("./src/config/db");
 
 async function setup() {
     const connection = await pool.getConnection();
@@ -181,3 +181,4 @@ async function setup() {
     }
 }
 setup();
+
