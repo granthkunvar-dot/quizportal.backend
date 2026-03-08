@@ -1,4 +1,4 @@
-const { pool } = require("../db");
+const { pool } = require("../config/db");
 const { closeSeasonIfExpired, takeDailyRankSnapshot } = require("../services/seasonService");
 const { evaluateAchievements } = require("../services/achievementService");
 
