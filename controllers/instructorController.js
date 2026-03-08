@@ -1,4 +1,4 @@
-const { pool } = require("../config/db");
+const pool  = require("../config/db");
 
 const ALLOWED_QUESTION_TYPES = new Set([
   "single_choice",
