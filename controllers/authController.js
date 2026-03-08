@@ -1,6 +1,5 @@
 const bcrypt = require("bcrypt");
-const { pool } = require("../config/db");
-
+const pool = require("../config/db");  // ← correct
 const SALT_ROUNDS = 10;
 const normalizeEmail = (email) => String(email || "").trim().toLowerCase();
 
