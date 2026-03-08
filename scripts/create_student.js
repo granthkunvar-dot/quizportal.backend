@@ -1,5 +1,5 @@
 const bcrypt = require('bcrypt');
-const { pool } = require('./src/config/db');
+const pool = require('./src/config/db');
 
 async function createStudent() {
     try {
@@ -14,3 +14,4 @@ async function createStudent() {
     }
 }
 createStudent();
+
