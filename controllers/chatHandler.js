@@ -1,4 +1,4 @@
-const { pool } = require("../config/db");
+const pool = require("../config/db");
 
 const initSocket = (io, sessionMiddleware) => {
     // 1. Wrap Express session middleware for Socket.io
@@ -110,5 +110,6 @@ const initSocket = (io, sessionMiddleware) => {
 };
 
 module.exports = { initSocket };
+
 
 
