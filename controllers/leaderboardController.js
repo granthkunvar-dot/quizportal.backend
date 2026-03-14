@@ -15,29 +15,27 @@ const getGlobalLeaderboard = async (req, res) => {
 
         const [rankings] = await pool.execute(
             `SELECT 
-        u.full_name,
-        u.display_name,
-        u.is_verified,
-        ls.aura_points,
-        ls.total_possible_weighted_points,
-        ls.total_attempts,
-        (ls.aura_points / NULLIF(ls.total_possible_weighted_points, 0)) * LOG10(ls.total_attempts + 1) AS ranking_score
-       FROM leaderboard_stats ls
-       JOIN users u ON u.user_id = ls.user_id
-       WHERE ls.season_id = ? AND ls.total_attempts > 0 AND u.role = 'student' AND u.status = 'active'
-       ORDER BY ls.aura_points DESC
-       LIMIT 50`,
+               u.full_name,
+               u.display_name,
+               u.is_verified,
+               ls.aura_points,
+               ls.total_possible_weighted_points,
+               ls.total_attempts,
+               (ls.aura_points / NULLIF(ls.total_possible_weighted_points, 0)) * LOG10(ls.total_attempts + 1) AS ranking_score
+             FROM leaderboard_stats ls
+             JOIN users u ON u.user_id = ls.user_id
+             WHERE ls.season_id = ? AND ls.total_attempts > 0 AND u.role = 'student' AND u.status = 'active'
+             ORDER BY ls.aura_points DESC
+             LIMIT 50`,
             [activeSeason.season_id]
         );
 
-        // Optional: Calculate rank change based on previous season
-        // For simplicity, we just return the calculated score and rank index in the frontend
         const formattedRankings = rankings.map((r, index) => ({
             rank: index + 1,
             fullName: r.full_name,
             displayName: r.display_name,
             isVerified: !!r.is_verified,
-            rankingScore: Number(r.ranking_score).toFixed(2), // Optional fallback
+            rankingScore: Number(r.ranking_score).toFixed(2),
             totalAttempts: r.total_attempts,
             auraPoints: Number(r.aura_points).toFixed(2)
         }));
@@ -74,30 +72,42 @@ const getCategoryLeaderboard = async (req, res) => {
         }
         const activeSeason = seasonRows[0];
 
-        const [rankings] = await pool.execute(
+        // MySQL 5.7 compatible — fetch and rank in JS
+        const [rows] = await pool.execute(
             `SELECT 
-        u.full_name,
-        u.display_name,
-        u.is_verified,
-        sls.side_aura_points,
-        sls.total_attempts,
-        RANK() OVER (ORDER BY sls.side_aura_points DESC, sls.total_attempts ASC, sls.id ASC) as final_rank
-       FROM side_leaderboard_stats sls
-       JOIN users u ON u.user_id = sls.user_id
-       WHERE sls.season_id = ? AND sls.category = ? AND u.role = 'student' AND u.status = 'active'
-       ORDER BY final_rank ASC
-       LIMIT 50`,
+               u.full_name,
+               u.display_name,
+               u.is_verified,
+               sls.side_aura_points,
+               sls.total_attempts,
+               sls.id
+             FROM side_leaderboard_stats sls
+             JOIN users u ON u.user_id = sls.user_id
+             WHERE sls.season_id = ? AND sls.category = ? AND u.role = 'student' AND u.status = 'active'
+             ORDER BY sls.side_aura_points DESC, sls.total_attempts ASC, sls.id ASC
+             LIMIT 50`,
             [activeSeason.season_id, category]
         );
 
-        const formattedRankings = rankings.map((r) => ({
-            rank: Number(r.final_rank),
-            fullName: r.full_name,
-            displayName: r.display_name,
-            isVerified: !!r.is_verified,
-            totalAttempts: Number(r.total_attempts),
-            auraPoints: Number(r.side_aura_points).toFixed(2)
-        }));
+        // Assign ranks in JS with tie handling
+        let rank = 1;
+        const formattedRankings = rows.map((r, index) => {
+            if (index > 0) {
+                const prev = rows[index - 1];
+                if (Number(r.side_aura_points) !== Number(prev.side_aura_points) ||
+                    Number(r.total_attempts) !== Number(prev.total_attempts)) {
+                    rank = index + 1;
+                }
+            }
+            return {
+                rank,
+                fullName: r.full_name,
+                displayName: r.display_name,
+                isVerified: !!r.is_verified,
+                totalAttempts: Number(r.total_attempts),
+                auraPoints: Number(r.side_aura_points).toFixed(2)
+            };
+        });
 
         return res.status(200).json({
             season: {
@@ -117,6 +127,3 @@ module.exports = {
     getGlobalLeaderboard,
     getCategoryLeaderboard
 };
-
-
-
