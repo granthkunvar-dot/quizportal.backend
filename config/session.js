@@ -1,31 +1,17 @@
 const session = require("express-session");
 const MySQLStore = require("express-mysql-session")(session);
 
-const options = {
-  host: process.env.DB_HOST,
-  port: process.env.DB_PORT || 3306,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME,
+// Reuse the same pool instead of opening new connections
+const pool = require("./db");
 
-  ssl: {
-    rejectUnauthorized: false
-  },
-
-  createDatabaseTable: true
-};
-
-const sessionStore = new MySQLStore(options);
+const sessionStore = new MySQLStore({}, pool);
 
 const sessionMiddleware = session({
   name: "quizportal.sid",
   secret: process.env.SESSION_SECRET || "dev-secret",
-  
   store: sessionStore,
-
   resave: false,
   saveUninitialized: false,
-
   cookie: {
     httpOnly: true,
     secure: true,
