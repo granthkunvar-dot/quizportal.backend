@@ -1,14 +1,16 @@
 const pool = require("../config/db");
 const { closeSeasonIfExpired } = require("../services/seasonService");
+const path = require("path");
+const fs = require("fs").promises;
+const sharp = require("sharp");
+const crypto = require("crypto");
 
 const getProfile = async (req, res) => {
     try {
         const studentId = req.session.user.userId;
 
-        // 1. Ensure season is up to date
         await closeSeasonIfExpired();
 
-        // 2. Fetch Base User Data + Followers count
         const [userRows] = await pool.execute(
             `SELECT full_name, email, lifetime_aura, profile_picture_url, display_name, specialization, current_core_title, created_at, current_streak,
                reputation_score, is_verified,
@@ -25,7 +27,6 @@ const getProfile = async (req, res) => {
         }
         const user = userRows[0];
 
-        // 3. Fetch Active Season Stats (if any)
         const [activeSeasonRows] = await pool.execute(
             `SELECT season_id FROM seasons WHERE is_active = 1 LIMIT 1`
         );
@@ -34,52 +35,52 @@ const getProfile = async (req, res) => {
         if (activeSeasonRows.length > 0) {
             const activeSeasonId = activeSeasonRows[0].season_id;
 
-            // Calculate the rank out of all participants in the current season dynamically
-            const [activeRankRows] = await pool.execute(
-                `SELECT r.final_rank, r.aura_points
-         FROM (
-           SELECT 
-             user_id,
-             aura_points,
-             RANK() OVER (ORDER BY aura_points DESC, total_attempts ASC, stat_id ASC) as final_rank
-           FROM leaderboard_stats
-           WHERE season_id = ?
-         ) r
-         WHERE r.user_id = ?`,
+            // MySQL 5.7 compatible rank calculation
+            const [myStatsRows] = await pool.execute(
+                `SELECT aura_points, total_attempts, stat_id FROM leaderboard_stats WHERE season_id = ? AND user_id = ?`,
                 [activeSeasonId, studentId]
             );
 
-            // Get total participants in active season
-            const [totalActiveRows] = await pool.execute(
-                `SELECT COUNT(*) as total FROM leaderboard_stats WHERE season_id = ?`,
-                [activeSeasonId]
-            );
+            if (myStatsRows.length > 0) {
+                const myStats = myStatsRows[0];
 
-            if (activeRankRows.length > 0) {
+                const [rankRows] = await pool.execute(
+                    `SELECT COUNT(*) + 1 as final_rank
+                     FROM leaderboard_stats
+                     WHERE season_id = ?
+                     AND (
+                       aura_points > ?
+                       OR (aura_points = ? AND total_attempts < ?)
+                       OR (aura_points = ? AND total_attempts = ? AND stat_id < ?)
+                     )`,
+                    [activeSeasonId,
+                     myStats.aura_points,
+                     myStats.aura_points, myStats.total_attempts,
+                     myStats.aura_points, myStats.total_attempts, myStats.stat_id]
+                );
+
+                const [totalActiveRows] = await pool.execute(
+                    `SELECT COUNT(*) as total FROM leaderboard_stats WHERE season_id = ?`,
+                    [activeSeasonId]
+                );
+
                 activeSeasonStats = {
-                    rank: Number(activeRankRows[0].final_rank),
+                    rank: Number(rankRows[0].final_rank),
                     totalParticipants: Number(totalActiveRows[0].total),
-                    seasonAura: Number(activeRankRows[0].aura_points)
+                    seasonAura: Number(myStats.aura_points)
                 };
             }
         }
 
-        // 4. Fetch Historical Seasons
-        // Get all closed seasons starting from when the user was created (or just all closed seasons)
         const [historyRows] = await pool.execute(
             `SELECT 
-         usr.season_id,
-         s.start_date,
-         s.end_date,
-         usr.final_rank,
-         usr.total_participants,
-         usr.season_aura,
-         usr.participation_status,
-         usr.awarded_title
-       FROM user_season_results usr
-       JOIN seasons s ON s.season_id = usr.season_id
-       WHERE usr.user_id = ?
-       ORDER BY s.end_date DESC`,
+               usr.season_id, s.start_date, s.end_date,
+               usr.final_rank, usr.total_participants, usr.season_aura,
+               usr.participation_status, usr.awarded_title
+             FROM user_season_results usr
+             JOIN seasons s ON s.season_id = usr.season_id
+             WHERE usr.user_id = ?
+             ORDER BY s.end_date DESC`,
             [studentId]
         );
 
@@ -94,21 +95,15 @@ const getProfile = async (req, res) => {
             awardedTitle: row.awarded_title
         }));
 
-        // 4b. Fetch Side Mode History
         const [sideHistoryRows] = await pool.execute(
             `SELECT 
-             usr.season_id,
-             s.start_date,
-             s.end_date,
-             usr.category,
-             usr.final_rank,
-             usr.total_participants,
-             usr.participation_status,
-             usr.awarded_title
-           FROM user_side_season_results usr
-           JOIN seasons s ON s.season_id = usr.season_id
-           WHERE usr.user_id = ? AND usr.participation_status = 'participated'
-           ORDER BY s.end_date DESC`,
+               usr.season_id, s.start_date, s.end_date,
+               usr.category, usr.final_rank, usr.total_participants,
+               usr.participation_status, usr.awarded_title
+             FROM user_side_season_results usr
+             JOIN seasons s ON s.season_id = usr.season_id
+             WHERE usr.user_id = ? AND usr.participation_status = 'participated'
+             ORDER BY s.end_date DESC`,
             [studentId]
         );
 
@@ -123,7 +118,6 @@ const getProfile = async (req, res) => {
             awardedTitle: row.awarded_title
         }));
 
-        // 4a. Fetch Advanced Stats & Percentile
         const [percentileRows] = await pool.execute(
             `SELECT 
                 (SELECT COUNT(*) FROM users WHERE role = 'student' AND status = 'active') as total_students,
@@ -137,7 +131,6 @@ const getProfile = async (req, res) => {
             totalStudents = Number(percentileRows[0].total_students);
             rankAbove = Number(percentileRows[0].rank_above);
         }
-        // If there's only 1 student, they are 100th percentile. Else calculate mathematically.
         const userRank = rankAbove + 1;
         const percentile = totalStudents > 1 ? ((totalStudents - userRank) / (totalStudents - 1)) * 100 : 100;
 
@@ -155,8 +148,7 @@ const getProfile = async (req, res) => {
                  FROM answers a 
                  JOIN attempts att ON a.attempt_id = att.attempt_id 
                  JOIN questions q ON a.question_id = q.question_id 
-                 WHERE att.student_id = ? AND att.status = 'graded') as hard_total
-            `,
+                 WHERE att.student_id = ? AND att.status = 'graded') as hard_total`,
             [studentId, studentId, studentId, studentId, studentId]
         );
 
@@ -172,13 +164,11 @@ const getProfile = async (req, res) => {
             advancedStats.seasonsPlayed = Number(row.seasons_played);
             advancedStats.bestRank = row.best_rank !== null ? Number(row.best_rank) : null;
             advancedStats.totalAttempts = Number(row.total_attempts);
-
-            let hardCorrect = Number(row.hard_correct || 0);
-            let hardTotal = Number(row.hard_total || 0);
+            const hardCorrect = Number(row.hard_correct || 0);
+            const hardTotal = Number(row.hard_total || 0);
             advancedStats.hardAccuracy = hardTotal > 0 ? (hardCorrect / hardTotal) * 100 : 0;
         }
 
-        // 6. Fetch Achievements
         const [achieveRows] = await pool.execute(
             `SELECT achievement_key, unlocked_at FROM achievements WHERE user_id = ? ORDER BY unlocked_at DESC`,
             [studentId]
@@ -188,7 +178,6 @@ const getProfile = async (req, res) => {
             unlockedAt: a.unlocked_at
         }));
 
-        // 5. Build Profile Response
         return res.status(200).json({
             profile: {
                 fullName: user.full_name,
@@ -206,7 +195,7 @@ const getProfile = async (req, res) => {
                 followerCount: user.follower_count,
                 followingCount: user.following_count
             },
-            advancedStats: advancedStats,
+            advancedStats,
             activeSeason: activeSeasonStats,
             history: formattedHistory,
             sideHistory: formattedSideHistory,
@@ -224,64 +213,82 @@ const getLiveDashboardStats = async (req, res) => {
         const studentId = req.session.user.userId;
         await closeSeasonIfExpired();
 
-        const [seasonRows] = await pool.execute(`SELECT season_id, end_date FROM seasons WHERE is_active = 1 LIMIT 1`);
+        const [seasonRows] = await pool.execute(
+            `SELECT season_id, end_date FROM seasons WHERE is_active = 1 LIMIT 1`
+        );
         if (seasonRows.length === 0) return res.status(200).json({ noActiveSeason: true });
 
         const activeSeason = seasonRows[0];
 
-        // 1. Basic user stats needed for dashboard
         const [userRows] = await pool.execute(
             `SELECT current_streak, lifetime_aura FROM users WHERE user_id = ? LIMIT 1`,
             [studentId]
         );
         const user = userRows[0];
 
-        // 2. Rank & Momentum
-        const todayStr = new Date().toISOString().split('T')[0];
         const yesterday = new Date();
         yesterday.setDate(yesterday.getDate() - 1);
         const yesterdayStr = yesterday.toISOString().split('T')[0];
 
-        const [rankRows] = await pool.execute(`
-            SELECT r.final_rank, r.aura_points FROM (
-                SELECT user_id, aura_points, RANK() OVER (ORDER BY aura_points DESC, total_attempts ASC, stat_id ASC) as final_rank
-                FROM leaderboard_stats WHERE season_id = ?
-            ) r WHERE r.user_id = ?
-        `, [activeSeason.season_id, studentId]);
+        // MySQL 5.7 compatible rank calculation
+        const [myStatsRows] = await pool.execute(
+            `SELECT aura_points, total_attempts, stat_id FROM leaderboard_stats WHERE season_id = ? AND user_id = ?`,
+            [activeSeason.season_id, studentId]
+        );
 
-        const currentRank = rankRows.length > 0 ? Number(rankRows[0].final_rank) : null;
-        const currentAura = rankRows.length > 0 ? Number(rankRows[0].aura_points) : 0;
+        let currentRank = null;
+        let currentAura = 0;
 
-        const [snapshotRows] = await pool.execute(`
-            SELECT rank_value FROM daily_rank_snapshots 
-            WHERE user_id = ? AND snapshot_date = ?
-        `, [studentId, yesterdayStr]);
+        if (myStatsRows.length > 0) {
+            const myStats = myStatsRows[0];
+            currentAura = Number(myStats.aura_points);
+
+            const [rankRows] = await pool.execute(
+                `SELECT COUNT(*) + 1 as final_rank
+                 FROM leaderboard_stats
+                 WHERE season_id = ?
+                 AND (
+                   aura_points > ?
+                   OR (aura_points = ? AND total_attempts < ?)
+                   OR (aura_points = ? AND total_attempts = ? AND stat_id < ?)
+                 )`,
+                [activeSeason.season_id,
+                 myStats.aura_points,
+                 myStats.aura_points, myStats.total_attempts,
+                 myStats.aura_points, myStats.total_attempts, myStats.stat_id]
+            );
+            currentRank = Number(rankRows[0].final_rank);
+        }
+
+        const [snapshotRows] = await pool.execute(
+            `SELECT rank_value FROM daily_rank_snapshots WHERE user_id = ? AND snapshot_date = ?`,
+            [studentId, yesterdayStr]
+        );
 
         const yesterdayRank = snapshotRows.length > 0 ? Number(snapshotRows[0].rank_value) : currentRank;
 
         let momentum = 0;
         if (currentRank && yesterdayRank) {
-            momentum = yesterdayRank - currentRank; // Positive means moved up in rank
+            momentum = yesterdayRank - currentRank;
         }
 
-        // 3. Rival / Next Target (User exactly one rank above)
+        // Rival — find user with next higher aura
         let rival = null;
-        if (currentRank && currentRank > 1) {
-            const targetRank = currentRank - 1;
-            const [rivalRows] = await pool.execute(`
-                SELECT r.user_id, r.aura_points, u.full_name 
-                FROM (
-                    SELECT user_id, aura_points, RANK() OVER (ORDER BY aura_points DESC, total_attempts ASC, stat_id ASC) as final_rank
-                    FROM leaderboard_stats WHERE season_id = ?
-                ) r 
-                JOIN users u ON u.user_id = r.user_id
-                WHERE r.final_rank = ? LIMIT 1
-            `, [activeSeason.season_id, targetRank]);
+        if (currentRank && currentRank > 1 && myStatsRows.length > 0) {
+            const [rivalRows] = await pool.execute(
+                `SELECT ls.user_id, ls.aura_points, u.full_name
+                 FROM leaderboard_stats ls
+                 JOIN users u ON u.user_id = ls.user_id
+                 WHERE ls.season_id = ? AND ls.aura_points > ?
+                 ORDER BY ls.aura_points ASC
+                 LIMIT 1`,
+                [activeSeason.season_id, myStatsRows[0].aura_points]
+            );
 
             if (rivalRows.length > 0) {
                 rival = {
                     name: rivalRows[0].full_name,
-                    rank: targetRank,
+                    rank: currentRank - 1,
                     auraToBeat: Number(rivalRows[0].aura_points) - currentAura
                 };
             }
@@ -301,12 +308,6 @@ const getLiveDashboardStats = async (req, res) => {
     }
 };
 
-const path = require("path");
-const fs = require("fs").promises;
-const sharp = require("sharp");
-const crypto = require("crypto");
-
-// Helper to validate display name
 const isValidDisplayName = (name) => {
     if (!name || typeof name !== "string") return false;
     const clean = name.trim();
@@ -321,14 +322,12 @@ const updateProfile = async (req, res) => {
         const studentId = req.session.user.userId;
         const { displayName, specialization } = req.body;
 
-        // 1. Process Display Name Update (Optional field if they just update avatar)
         if (displayName) {
             const cleanDisplayName = displayName.trim();
             if (!isValidDisplayName(cleanDisplayName)) {
                 return res.status(400).json({ message: "Display Name must be 3-30 characters, alphanumeric, underscores, or spaces only" });
             }
 
-            // Check uniqueness (ignoring self)
             const [existing] = await pool.execute(
                 "SELECT user_id FROM users WHERE LOWER(display_name) = LOWER(?) AND user_id != ?",
                 [cleanDisplayName, studentId]
@@ -344,33 +343,27 @@ const updateProfile = async (req, res) => {
             );
         }
 
-        // 2. Process Specialization Update (Optional, part of strict bio identity rules if present)
         if (specialization !== undefined) {
-            const cleanSpecialization = String(specialization).trim().substring(0, 50); // Hardcap for bio/spec
+            const cleanSpecialization = String(specialization).trim().substring(0, 50);
             await pool.execute(
                 "UPDATE users SET specialization = ? WHERE user_id = ?",
                 [cleanSpecialization || null, studentId]
             );
         }
 
-        // 3. Process Avatar Upload via Multer Buffer + Sharp 
         if (req.file) {
             const uploadsDir = path.join(__dirname, "..", "..", "uploads", "avatars");
-
-            // Ensure directory exists
             await fs.mkdir(uploadsDir, { recursive: true });
 
             const filename = `${crypto.randomUUID()}.png`;
             const filepath = path.join(uploadsDir, filename);
 
-            // Process with sharp (resize to exact 256x256, format to PNG)
             await sharp(req.file.buffer)
                 .resize(256, 256, { fit: "cover" })
                 .png()
                 .toFile(filepath);
 
             const profilePictureUrl = `/uploads/avatars/${filename}`;
-
             await pool.execute(
                 "UPDATE users SET profile_picture_url = ? WHERE user_id = ?",
                 [profilePictureUrl, studentId]
@@ -383,13 +376,10 @@ const updateProfile = async (req, res) => {
         console.error("Error updating profile:", e);
         return res.status(500).json({ message: "Server error processing profile updates." });
     }
-}
+};
 
 module.exports = {
     getProfile,
     getLiveDashboardStats,
     updateProfile
 };
-
-
-
