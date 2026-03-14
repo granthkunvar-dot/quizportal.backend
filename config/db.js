@@ -1,5 +1,4 @@
 const mysql = require("mysql2/promise");
-
 const pool = mysql.createPool({
   host: process.env.DB_HOST,
   port: parseInt(process.env.DB_PORT) || 3306,
@@ -7,11 +6,8 @@ const pool = mysql.createPool({
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME,
   waitForConnections: true,
-  connectionLimit: 10,
+  connectionLimit: 3,  // ← lowered for filess.io 5 connection limit
   queueLimit: 0,
-  ssl: {
-    rejectUnauthorized: false  // ← back to false for filess.io
-  }
+  ssl: { rejectUnauthorized: false }
 });
-
 module.exports = pool;
