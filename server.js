@@ -9,6 +9,8 @@ const followRoutes = require("./routes/followRoutes");
 const instructorRoutes = require("./routes/instructorRoutes");
 const leaderboardRoutes = require("./routes/leaderboardRoutes");
 const searchRoutes = require("./routes/searchRoutes");
+const chatRoutes = require("./routes/chatRoutes");
+
 
 const app = express();
 app.set("trust proxy", 1);
@@ -32,6 +34,8 @@ app.use("/api/follow", followRoutes);
 app.use("/api/instructor", instructorRoutes);
 app.use("/api/leaderboards", leaderboardRoutes);
 app.use("/api/search", searchRoutes);
+app.use("/api/chat", chatRoutes);
+
 
 app.use((err, req, res, next) => {
   console.error("Server Error:", err);
