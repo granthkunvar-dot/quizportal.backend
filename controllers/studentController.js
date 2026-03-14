@@ -75,7 +75,7 @@ const listAvailableQuizzes = async (req, res) => {
     createdBy: quiz.created_by,
     instructorName: quiz.instructor_name,
     questionCount: Number(quiz.question_count),
-    timeLimitMinutes: quizConfig.timeLimitMinutes,
+    timeLimitMinutes: process.env.QUIZ_TIME_LIMIT || 30,
     createdAt: quiz.created_at
   }));
 
@@ -106,7 +106,7 @@ const getQuizDetails = async (req, res) => {
       description: rows[0].description,
       instructorName: rows[0].instructor_name,
       questionCount: Number(rows[0].question_count),
-      timeLimitMinutes: quizConfig.timeLimitMinutes
+      timeLimitMinutes: process.env.QUIZ_TIME_LIMIT || 30
     }
   });
 };
@@ -256,7 +256,7 @@ const startQuiz = async (req, res) => {
       status: attempt.status,
       startedAt: attempt.started_at,
       deadline: toIso(deadline),
-      timeLimitMinutes: quizConfig.timeLimitMinutes,
+      timeLimitMinutes: process.env.QUIZ_TIME_LIMIT || 30,
       remainingSeconds
     },
     quiz: {
