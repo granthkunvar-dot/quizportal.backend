@@ -1,4 +1,4 @@
-const  pool = require("../config/db");
+const pool = require("../config/db");
 const { closeSeasonIfExpired, takeDailyRankSnapshot } = require("../services/seasonService");
 const { evaluateAchievements } = require("../services/achievementService");
 
@@ -11,8 +11,8 @@ const parsePositiveInt = (value) => {
 };
 
 const buildDeadline = (startedAt) => {
-const timeLimit = process.env.QUIZ_TIME_LIMIT || 30; 
-const durationMs = timeLimit * 60 * 1000;  
+  const timeLimit = process.env.QUIZ_TIME_LIMIT || 30;
+  const durationMs = timeLimit * 60 * 1000;
   return new Date(new Date(startedAt).getTime() + durationMs);
 };
 
@@ -35,6 +35,41 @@ const getCognitiveMultiplier = (cog) => {
     case 'remember':
     case 'understand': default: return 1.0;
   }
+};
+
+// MySQL 5.7 compatible rank calculation (no window functions)
+const getMainRank = async (connection, seasonId, userId) => {
+  const [rows] = await connection.execute(
+    `SELECT COUNT(*) + 1 as final_rank
+     FROM leaderboard_stats
+     WHERE season_id = ?
+     AND (
+       aura_points > COALESCE((SELECT aura_points FROM leaderboard_stats WHERE season_id = ? AND user_id = ?), -1)
+       OR (
+         aura_points = COALESCE((SELECT aura_points FROM leaderboard_stats WHERE season_id = ? AND user_id = ?), -1)
+         AND total_attempts < COALESCE((SELECT total_attempts FROM leaderboard_stats WHERE season_id = ? AND user_id = ?), 999999)
+       )
+     )`,
+    [seasonId, seasonId, userId, seasonId, userId, seasonId, userId]
+  );
+  return rows.length > 0 ? Number(rows[0].final_rank) : null;
+};
+
+const getSideRank = async (connection, seasonId, category, userId) => {
+  const [rows] = await connection.execute(
+    `SELECT COUNT(*) + 1 as final_rank
+     FROM side_leaderboard_stats
+     WHERE season_id = ? AND category = ?
+     AND (
+       side_aura_points > COALESCE((SELECT side_aura_points FROM side_leaderboard_stats WHERE season_id = ? AND category = ? AND user_id = ?), -1)
+       OR (
+         side_aura_points = COALESCE((SELECT side_aura_points FROM side_leaderboard_stats WHERE season_id = ? AND category = ? AND user_id = ?), -1)
+         AND total_attempts < COALESCE((SELECT total_attempts FROM side_leaderboard_stats WHERE season_id = ? AND category = ? AND user_id = ?), 999999)
+       )
+     )`,
+    [seasonId, category, seasonId, category, userId, seasonId, category, userId, seasonId, category, userId]
+  );
+  return rows.length > 0 ? Number(rows[0].final_rank) : null;
 };
 
 const listAvailableQuizzes = async (req, res) => {
@@ -418,12 +453,12 @@ const submitQuiz = async (req, res) => {
     let activeSeason = seasonRows.length > 0 ? seasonRows[0] : null;
 
     if (!activeSeason) {
-      const now = new Date();
+      const nowDate = new Date();
       const [insertSeason] = await connection.execute(
         `INSERT INTO seasons (start_date, end_date, is_active, is_closed) VALUES (?, DATE_ADD(?, INTERVAL 10 DAY), 1, 0)`,
-        [now, now]
+        [nowDate, nowDate]
       );
-      activeSeason = { season_id: insertSeason.insertId, start_date: now, end_date: new Date(now.getTime() + 10 * 24 * 60 * 60 * 1000) };
+      activeSeason = { season_id: insertSeason.insertId };
     }
 
     const isMainMode = (attempt.category === 'main');
@@ -444,16 +479,7 @@ const submitQuiz = async (req, res) => {
       );
       const prevAttemptsCount = Number(prevAttemptsRows[0].count);
       diminishingFactor = 1 / Math.sqrt(prevAttemptsCount + 1);
-
-      const [preRankRows] = await connection.execute(
-        `SELECT r.final_rank FROM (
-           SELECT user_id, RANK() OVER (ORDER BY aura_points DESC, total_attempts ASC, stat_id ASC) as final_rank
-           FROM leaderboard_stats WHERE season_id = ?
-         ) r WHERE r.user_id = ?`,
-        [activeSeason.season_id, studentId]
-      );
-      if (preRankRows.length > 0) rankBefore = Number(preRankRows[0].final_rank);
-
+      rankBefore = await getMainRank(connection, activeSeason.season_id, studentId);
     } else {
       const [todayAttemptsRows] = await connection.execute(
         `SELECT COUNT(*) as count FROM attempts a
@@ -464,15 +490,7 @@ const submitQuiz = async (req, res) => {
       );
       const dailyCount = Number(todayAttemptsRows[0].count);
       diminishingFactor = Math.max(0.2, 1.0 - (dailyCount * 0.2));
-
-      const [preRankRows] = await connection.execute(
-        `SELECT r.final_rank FROM (
-           SELECT user_id, RANK() OVER (ORDER BY side_aura_points DESC, total_attempts ASC, id ASC) as final_rank
-           FROM side_leaderboard_stats WHERE season_id = ? AND category = ?
-         ) r WHERE r.user_id = ?`,
-        [activeSeason.season_id, attempt.category, studentId]
-      );
-      if (preRankRows.length > 0) rankBefore = Number(preRankRows[0].final_rank);
+      rankBefore = await getSideRank(connection, activeSeason.season_id, attempt.category, studentId);
     }
 
     for (const q of questionRows) {
@@ -533,17 +551,12 @@ const submitQuiz = async (req, res) => {
         );
       }
 
-      const [postRankRows] = await connection.execute(
-        `SELECT r.final_rank, r.aura_points FROM (
-           SELECT user_id, aura_points, RANK() OVER (ORDER BY aura_points DESC, total_attempts ASC, stat_id ASC) as final_rank
-           FROM leaderboard_stats WHERE season_id = ?
-         ) r WHERE r.user_id = ?`,
+      const [auraRows] = await connection.execute(
+        `SELECT aura_points FROM leaderboard_stats WHERE season_id = ? AND user_id = ?`,
         [activeSeason.season_id, studentId]
       );
-      if (postRankRows.length > 0) {
-        rankAfter = Number(postRankRows[0].final_rank);
-        newAuraTotal = Number(postRankRows[0].aura_points);
-      }
+      if (auraRows.length > 0) newAuraTotal = Number(auraRows[0].aura_points);
+      rankAfter = await getMainRank(connection, activeSeason.season_id, studentId);
 
     } else {
       await connection.execute(
@@ -555,17 +568,12 @@ const submitQuiz = async (req, res) => {
         [studentId, activeSeason.season_id, attempt.category, totalWeightedEarnedPoints]
       );
 
-      const [postRankRows] = await connection.execute(
-        `SELECT r.final_rank, r.side_aura_points FROM (
-           SELECT user_id, side_aura_points, RANK() OVER (ORDER BY side_aura_points DESC, total_attempts ASC, id ASC) as final_rank
-           FROM side_leaderboard_stats WHERE season_id = ? AND category = ?
-         ) r WHERE r.user_id = ?`,
+      const [sideAuraRows] = await connection.execute(
+        `SELECT side_aura_points FROM side_leaderboard_stats WHERE season_id = ? AND category = ? AND user_id = ?`,
         [activeSeason.season_id, attempt.category, studentId]
       );
-      if (postRankRows.length > 0) {
-        rankAfter = Number(postRankRows[0].final_rank);
-        newAuraTotal = Number(postRankRows[0].side_aura_points);
-      }
+      if (sideAuraRows.length > 0) newAuraTotal = Number(sideAuraRows[0].side_aura_points);
+      rankAfter = await getSideRank(connection, activeSeason.season_id, attempt.category, studentId);
     }
 
     const todayStr = now.toISOString().split('T')[0];
@@ -577,7 +585,6 @@ const submitQuiz = async (req, res) => {
     if (userStreakRows.length > 0) {
       const u = userStreakRows[0];
       const lastActivityStr = u.last_activity_date ? new Date(u.last_activity_date).toISOString().split('T')[0] : null;
-
       let newStreak = u.current_streak;
 
       if (lastActivityStr !== todayStr) {
@@ -585,7 +592,6 @@ const submitQuiz = async (req, res) => {
           const yesterday = new Date(now);
           yesterday.setDate(yesterday.getDate() - 1);
           const yesterdayStr = yesterday.toISOString().split('T')[0];
-
           if (lastActivityStr === yesterdayStr) {
             newStreak += 1;
           } else {
@@ -594,7 +600,6 @@ const submitQuiz = async (req, res) => {
         } else {
           newStreak = 1;
         }
-
         await connection.execute(
           `UPDATE users SET current_streak = ?, last_activity_date = ? WHERE user_id = ?`,
           [newStreak, todayStr, studentId]
