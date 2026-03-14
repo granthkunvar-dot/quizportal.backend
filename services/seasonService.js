@@ -15,24 +15,17 @@ const assignTitle = (rank) => {
     return null;
 };
 
-/**
- * System-level function to cleanly close an expired season.
- * Evaluates rankings deterministically, assigns top 5 titles,
- * and records history for all students.
- */
 const closeSeasonIfExpired = async () => {
     const connection = await pool.getConnection();
 
     try {
         await connection.beginTransaction();
 
-        // 1. Lock active season to prevent race conditions
         const [seasonRows] = await connection.execute(
             `SELECT * FROM seasons WHERE is_active = 1 FOR UPDATE`
         );
 
         if (seasonRows.length === 0) {
-            // No active season to process
             await connection.commit();
             return;
         }
@@ -41,48 +34,54 @@ const closeSeasonIfExpired = async () => {
         const now = new Date();
         const seasonEnd = new Date(activeSeason.end_date);
 
-        // If season hasn't ended or is already closed, do nothing.
         if (now.getTime() <= seasonEnd.getTime() || activeSeason.is_closed === 1) {
             await connection.commit();
             return;
         }
 
-        // --- SEASON IS EXPIRED AND NEEDS CLOSING ---
-
-        // 2. Fetch all students (total_participants base value)
         const [allStudents] = await connection.execute(
             `SELECT user_id FROM users WHERE role = 'student'`
         );
         const totalParticipants = allStudents.length;
 
-        // 3. Mark the current season as closed and INACTIVE
         await connection.execute(
             `UPDATE seasons SET is_active = NULL, is_closed = 1 WHERE season_id = ?`,
             [activeSeason.season_id]
         );
 
-        // 4. Calculate exact, deterministic ranks for this season using window functions
-        //    Tie break: Higher aura -> Fewer total attempts -> Lower stat_id (stable fallback)
-        const [rankings] = await connection.execute(
-            `SELECT 
-         user_id, 
-         aura_points,
-         RANK() OVER (ORDER BY aura_points DESC, total_attempts ASC, stat_id ASC) as final_rank
-       FROM leaderboard_stats
-       WHERE season_id = ?`,
+        // MySQL 5.7 compatible ranking — fetch all stats and rank in JS
+        const [leaderboardRows] = await connection.execute(
+            `SELECT user_id, aura_points, total_attempts, stat_id
+             FROM leaderboard_stats
+             WHERE season_id = ?`,
             [activeSeason.season_id]
         );
 
-        // Create a lookup map for participants
+        // Sort deterministically: higher aura DESC, fewer attempts ASC, lower stat_id ASC
+        leaderboardRows.sort((a, b) => {
+            if (Number(b.aura_points) !== Number(a.aura_points)) return Number(b.aura_points) - Number(a.aura_points);
+            if (Number(a.total_attempts) !== Number(b.total_attempts)) return Number(a.total_attempts) - Number(b.total_attempts);
+            return Number(a.stat_id) - Number(b.stat_id);
+        });
+
         const participantMap = new Map();
-        for (const r of rankings) {
+        let rank = 1;
+        for (let i = 0; i < leaderboardRows.length; i++) {
+            const r = leaderboardRows[i];
+            // Handle ties
+            if (i > 0) {
+                const prev = leaderboardRows[i - 1];
+                if (Number(r.aura_points) !== Number(prev.aura_points) ||
+                    Number(r.total_attempts) !== Number(prev.total_attempts)) {
+                    rank = i + 1;
+                }
+            }
             participantMap.set(r.user_id, {
-                rank: Number(r.final_rank),
+                rank,
                 aura: Number(r.aura_points)
             });
         }
 
-        // 5. Insert historical records for EVERY student
         for (const student of allStudents) {
             const pData = participantMap.get(student.user_id);
 
@@ -100,21 +99,13 @@ const closeSeasonIfExpired = async () => {
 
             await connection.execute(
                 `INSERT INTO user_season_results 
-          (user_id, season_id, final_rank, total_participants, season_aura, participation_status, awarded_title)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-                [
-                    student.user_id,
-                    activeSeason.season_id,
-                    finalRank,
-                    totalParticipants,
-                    seasonAura,
-                    status,
-                    awardedTitle
-                ]
+                 (user_id, season_id, final_rank, total_participants, season_aura, participation_status, awarded_title)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                [student.user_id, activeSeason.season_id, finalRank, totalParticipants, seasonAura, status, awardedTitle]
             );
         }
 
-        // 5.5 Process Side Modes
+        // Process Side Modes
         const SIDE_CATEGORIES = [
             { id: 'automotive', titles: ['Gearhead Champion', 'Torque Elite', 'Track Specialist'] },
             { id: 'cinema', titles: ['Screen Sovereign', 'Plot Strategist', 'Scene Specialist'] },
@@ -122,18 +113,32 @@ const closeSeasonIfExpired = async () => {
         ];
 
         for (const cat of SIDE_CATEGORIES) {
-            const [sideRankings] = await connection.execute(
-                `SELECT 
-                   user_id, 
-                   RANK() OVER (ORDER BY side_aura_points DESC, total_attempts ASC, id ASC) as final_rank
+            const [sideRows] = await connection.execute(
+                `SELECT user_id, side_aura_points, total_attempts, id
                  FROM side_leaderboard_stats
                  WHERE season_id = ? AND category = ?`,
                 [activeSeason.season_id, cat.id]
             );
 
+            // Sort deterministically in JS
+            sideRows.sort((a, b) => {
+                if (Number(b.side_aura_points) !== Number(a.side_aura_points)) return Number(b.side_aura_points) - Number(a.side_aura_points);
+                if (Number(a.total_attempts) !== Number(b.total_attempts)) return Number(a.total_attempts) - Number(b.total_attempts);
+                return Number(a.id) - Number(b.id);
+            });
+
             const sideParticipantMap = new Map();
-            for (const r of sideRankings) {
-                sideParticipantMap.set(r.user_id, Number(r.final_rank));
+            let sideRank = 1;
+            for (let i = 0; i < sideRows.length; i++) {
+                const r = sideRows[i];
+                if (i > 0) {
+                    const prev = sideRows[i - 1];
+                    if (Number(r.side_aura_points) !== Number(prev.side_aura_points) ||
+                        Number(r.total_attempts) !== Number(prev.total_attempts)) {
+                        sideRank = i + 1;
+                    }
+                }
+                sideParticipantMap.set(r.user_id, sideRank);
             }
 
             for (const student of allStudents) {
@@ -148,23 +153,14 @@ const closeSeasonIfExpired = async () => {
                     `INSERT INTO user_side_season_results 
                      (user_id, season_id, category, final_rank, total_participants, awarded_title, participation_status)
                      VALUES (?, ?, ?, ?, ?, ?, ?)`,
-                    [
-                        student.user_id,
-                        activeSeason.season_id,
-                        cat.id,
-                        finalRank,
-                        totalParticipants,
-                        awardedTitle,
-                        status
-                    ]
+                    [student.user_id, activeSeason.season_id, cat.id, finalRank, totalParticipants, awardedTitle, status]
                 );
             }
         }
 
-        // 6. Automatically start the next season
         await connection.execute(
             `INSERT INTO seasons (start_date, end_date, is_active, is_closed) 
-       VALUES (?, DATE_ADD(?, INTERVAL 10 DAY), 1, 0)`,
+             VALUES (?, DATE_ADD(?, INTERVAL 10 DAY), 1, 0)`,
             [now, now]
         );
 
@@ -179,16 +175,11 @@ const closeSeasonIfExpired = async () => {
     }
 };
 
-/**
- * System-level function to snapshot ranks daily.
- * Must be called intermittently (e.g. from the same place as closeSeasonIfExpired)
- */
 const takeDailyRankSnapshot = async () => {
     const connection = await pool.getConnection();
     try {
         await connection.beginTransaction();
 
-        // Check active season
         const [seasonRows] = await connection.execute(
             `SELECT season_id, last_snapshot_date FROM seasons WHERE is_active = 1 FOR UPDATE`
         );
@@ -198,40 +189,45 @@ const takeDailyRankSnapshot = async () => {
         }
 
         const activeSeason = seasonRows[0];
-        const todayStr = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+        const todayStr = new Date().toISOString().split('T')[0];
 
-        // Check if snapshot already taken today
         const lastSnapshotStr = activeSeason.last_snapshot_date
             ? new Date(activeSeason.last_snapshot_date).toISOString().split('T')[0]
             : null;
 
         if (lastSnapshotStr === todayStr) {
-            // Already taken today
             await connection.commit();
             return;
         }
 
-        // Fetch top 100 users strictly for daily_rank_snapshots
-        const [rankings] = await connection.execute(
-            `SELECT 
-                user_id,
-                RANK() OVER (ORDER BY aura_points DESC, total_attempts ASC, stat_id ASC) as final_rank
+        // MySQL 5.7 compatible — fetch and rank in JS
+        const [rankRows] = await connection.execute(
+            `SELECT user_id, aura_points, total_attempts, stat_id
              FROM leaderboard_stats
              WHERE season_id = ?
-             LIMIT 100`, // Store Top 100 max for efficiency
+             ORDER BY aura_points DESC, total_attempts ASC, stat_id ASC
+             LIMIT 100`,
             [activeSeason.season_id]
         );
 
-        if (rankings.length > 0) {
+        if (rankRows.length > 0) {
             const values = [];
             const placeholders = [];
 
-            for (const r of rankings) {
+            let rank = 1;
+            for (let i = 0; i < rankRows.length; i++) {
+                const r = rankRows[i];
+                if (i > 0) {
+                    const prev = rankRows[i - 1];
+                    if (Number(r.aura_points) !== Number(prev.aura_points) ||
+                        Number(r.total_attempts) !== Number(prev.total_attempts)) {
+                        rank = i + 1;
+                    }
+                }
                 placeholders.push('(?, ?, ?, ?)');
-                values.push(r.user_id, activeSeason.season_id, todayStr, Number(r.final_rank));
+                values.push(r.user_id, activeSeason.season_id, todayStr, rank);
             }
 
-            // Bulk Insert
             await connection.execute(
                 `INSERT INTO daily_rank_snapshots (user_id, season_id, snapshot_date, rank_value)
                  VALUES ${placeholders.join(',')}
@@ -259,5 +255,3 @@ module.exports = {
     closeSeasonIfExpired,
     takeDailyRankSnapshot
 };
-
-
