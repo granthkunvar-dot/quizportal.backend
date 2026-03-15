@@ -1,18 +1,12 @@
 const session = require("express-session");
 const RedisStore = require("connect-redis").default;
-const { createClient } = require("redis");
+const Redis = require("ioredis");
 
-// Use Upstash Redis with standard redis client via REST URL
-const redisClient = createClient({
-  url: process.env.UPSTASH_REDIS_REST_URL,
-  password: process.env.UPSTASH_REDIS_REST_TOKEN,
-  socket: {
-    tls: true,
-    rejectUnauthorized: false
-  }
+const redisClient = new Redis(process.env.UPSTASH_REDIS_URL, {
+  tls: {},
+  connectTimeout: 10000,
+  lazyConnect: true
 });
-
-redisClient.connect().catch(console.error);
 
 const store = new RedisStore({
   client: redisClient,
