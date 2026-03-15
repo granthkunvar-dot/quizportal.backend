@@ -1,14 +1,21 @@
 const session = require("express-session");
 const RedisStore = require("connect-redis").default;
-const { Redis } = require("@upstash/redis");
+const { createClient } = require("redis");
 
-const redis = new Redis({
+// Use Upstash Redis with standard redis client via REST URL
+const redisClient = createClient({
   url: process.env.UPSTASH_REDIS_REST_URL,
-  token: process.env.UPSTASH_REDIS_REST_TOKEN,
+  password: process.env.UPSTASH_REDIS_REST_TOKEN,
+  socket: {
+    tls: true,
+    rejectUnauthorized: false
+  }
 });
 
+redisClient.connect().catch(console.error);
+
 const store = new RedisStore({
-  client: redis,
+  client: redisClient,
   prefix: "quizportal:",
   disableTouch: true
 });
