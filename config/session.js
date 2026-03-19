@@ -2,10 +2,19 @@ const session = require("express-session");
 const RedisStore = require("connect-redis").default;
 const Redis = require("ioredis");
 
-const redisClient = new Redis(process.env.UPSTASH_REDIS_URL, {
+const redisClient = new Redis({
+  host: "boss-sparrow-72518.upstash.io",
+  port: 6379,
+  password: process.env.UPSTASH_REDIS_REST_TOKEN,
   tls: {},
-  connectTimeout: 10000,
-  lazyConnect: true
+  maxRetriesPerRequest: 1,
+  connectTimeout: 5000,
+  lazyConnect: true,
+  enableOfflineQueue: false
+});
+
+redisClient.on("error", (err) => {
+  console.error("Redis error:", err.message);
 });
 
 const store = new RedisStore({
