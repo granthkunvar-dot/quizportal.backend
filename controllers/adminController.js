@@ -24,19 +24,36 @@ exports.getUsers = async (req, res) => {
   try {
     const [users] = await pool.execute(
       `SELECT u.user_id, u.full_name, u.display_name, u.email, u.role, u.status, u.lifetime_aura, 
-                    u.current_streak, u.last_activity_date, u.created_at, u.is_verified,
-                    (
-                        SELECT r.final_rank 
-                        FROM (
-                            SELECT user_id, RANK() OVER (ORDER BY aura_points DESC, total_attempts ASC, stat_id ASC) as final_rank
-                            FROM leaderboard_stats
-                            WHERE season_id = (SELECT season_id FROM seasons WHERE is_active = 1 LIMIT 1)
-                        ) r WHERE r.user_id = u.user_id
-                    ) as current_rank
-             FROM users u
-             ORDER BY u.created_at DESC`
+              u.current_streak, u.last_activity_date, u.created_at, u.is_verified
+       FROM users u
+       ORDER BY u.created_at DESC`
     );
-    res.json({ users });
+
+    // Get active season for rank calculation
+    const [seasonRows] = await pool.execute(
+      `SELECT season_id FROM seasons WHERE is_active = 1 LIMIT 1`
+    );
+
+    let rankMap = {};
+    if (seasonRows.length > 0) {
+      const seasonId = seasonRows[0].season_id;
+      const [statsRows] = await pool.execute(
+        `SELECT user_id, aura_points, total_attempts, stat_id
+         FROM leaderboard_stats WHERE season_id = ?
+         ORDER BY aura_points DESC, total_attempts ASC, stat_id ASC`,
+        [seasonId]
+      );
+      statsRows.forEach((r, i) => {
+        rankMap[r.user_id] = i + 1;
+      });
+    }
+
+    const usersWithRank = users.map(u => ({
+      ...u,
+      current_rank: rankMap[u.user_id] || null
+    }));
+
+    res.json({ users: usersWithRank });
   } catch (e) {
     res.status(500).json({ message: e.message });
   }
