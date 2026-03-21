@@ -81,6 +81,7 @@ const getPublicProfile = async (req, res) => {
 
 module.exports = {
     searchUsers
+    getPublicProfile
 };
 
 
