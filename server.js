@@ -33,7 +33,7 @@ app.use("/api/admin", adminRoutes);
 app.use("/api/follow", followRoutes);
 app.use("/api/instructor", instructorRoutes);
 app.use("/api/leaderboards", leaderboardRoutes);
-app.use("/api/search", searchRoutes);
+app.use("/api/users", searchRoutes);
 app.use("/api/chat", chatRoutes);
 
 
