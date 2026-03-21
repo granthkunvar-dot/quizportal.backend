@@ -60,7 +60,7 @@ exports.getUsers = async (req, res) => {
 };
 
 exports.suspendUser = async (req, res) => {
-  const adminId = req.user.userId;
+  const adminId = req.session.user.userId;
   const targetUserId = req.params.id;
 
   try {
@@ -79,7 +79,7 @@ exports.suspendUser = async (req, res) => {
 };
 
 exports.reinstateUser = async (req, res) => {
-  const adminId = req.user.userId;
+  const adminId = req.session.user.userId;
   const targetUserId = req.params.id;
 
   try {
@@ -96,7 +96,7 @@ exports.reinstateUser = async (req, res) => {
 };
 
 exports.resetUserStreak = async (req, res) => {
-  const adminId = req.user.userId;
+  const adminId = req.session.user.userId;
   const targetUserId = req.params.id;
 
   try {
@@ -113,7 +113,7 @@ exports.resetUserStreak = async (req, res) => {
 };
 
 exports.toggleVerification = async (req, res) => {
-  const adminId = req.user.userId;
+  const adminId = req.session.user.userId;
   const targetUserId = req.params.id;
 
   try {
@@ -154,7 +154,7 @@ exports.getQuizzes = async (req, res) => {
 };
 
 exports.createQuiz = async (req, res) => {
-  const adminId = req.user.userId;
+  const adminId = req.session.user.userId;
   const { title, description, category, is_published } = req.body;
 
   try {
@@ -186,7 +186,7 @@ exports.bulkParseQuiz = async (req, res) => {
 };
 
 exports.bulkPublishQuiz = async (req, res) => {
-  const adminId = req.user.userId;
+  const adminId = req.session.user.userId;
   const { title, category, rawText, expectedCount } = req.body;
 
   if (!title || !category || !rawText) {
@@ -251,7 +251,7 @@ exports.bulkPublishQuiz = async (req, res) => {
 };
 
 exports.updateQuiz = async (req, res) => {
-  const adminId = req.user.userId;
+  const adminId = req.session.user.userId;
   const quizId = req.params.id;
   const { title, description, category } = req.body;
 
@@ -272,7 +272,7 @@ exports.updateQuiz = async (req, res) => {
 };
 
 exports.updateQuizStatus = async (req, res) => {
-  const adminId = req.user.userId;
+  const adminId = req.session.user.userId;
   const quizId = req.params.id;
   const { is_published } = req.body;
 
@@ -291,7 +291,7 @@ exports.updateQuizStatus = async (req, res) => {
 };
 
 exports.deleteQuiz = async (req, res) => {
-  const adminId = req.user.userId;
+  const adminId = req.session.user.userId;
   const quizId = req.params.id;
 
   try {
@@ -326,7 +326,7 @@ exports.getQuestions = async (req, res) => {
 };
 
 exports.createQuestion = async (req, res) => {
-  const adminId = req.user.userId;
+  const adminId = req.session.user.userId;
   const { quiz_id, question_text, difficulty, cognitive_level, points, order_index } = req.body;
 
   try {
@@ -345,7 +345,7 @@ exports.createQuestion = async (req, res) => {
 };
 
 exports.updateQuestion = async (req, res) => {
-  const adminId = req.user.userId;
+  const adminId = req.session.user.userId;
   const qId = req.params.id;
   const { question_text, difficulty, cognitive_level, points } = req.body;
 
@@ -365,7 +365,7 @@ exports.updateQuestion = async (req, res) => {
 };
 
 exports.deleteQuestion = async (req, res) => {
-  const adminId = req.user.userId;
+  const adminId = req.session.user.userId;
   const qId = req.params.id;
 
   try {
@@ -392,7 +392,7 @@ exports.getSeasons = async (req, res) => {
 };
 
 exports.extendSeason = async (req, res) => {
-  const adminId = req.user.userId;
+  const adminId = req.session.user.userId;
   const seasonId = req.params.id;
   const { addDays } = req.body;
 
@@ -412,7 +412,7 @@ exports.extendSeason = async (req, res) => {
 };
 
 exports.forceCloseSeason = async (req, res) => {
-  const adminId = req.user.userId;
+  const adminId = req.session.user.userId;
   // We can pull in the closeSeason logic from seasonService.js, bypassing time checks.
   const { closeSeasonIfExpired } = require("../services/seasonService");
 
@@ -509,7 +509,7 @@ exports.getAuditLogs = async (req, res) => {
 // SUPER ADMIN ROLE MGMT
 // ------------------------------------------------------------------
 exports.updateUserRole = async (req, res) => {
-  const adminId = req.user.userId;
+  const adminId = req.session.user.userId;
   const targetUserId = req.params.id;
   const { role } = req.body; // 'student', 'instructor', 'admin', 'super_admin'
 
