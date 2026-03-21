@@ -1,27 +1,16 @@
 const session = require("express-session");
-const RedisStore = require("connect-redis").default;
-const Redis = require("ioredis");
+const RedisStore = require("connect-redis")(session);
+const { Redis } = require("@upstash/redis");
 
-const redisClient = new Redis(process.env.UPSTASH_REDIS_URL, {
-  maxRetriesPerRequest: 1,
-  enableOfflineQueue: false,
-  lazyConnect: false
-});
-
-redisClient.on("error", (err) => {
-  console.error("Redis error:", err.message);
-});
-
-const store = new RedisStore({
-  client: redisClient,
-  prefix: "quizportal:",
-  disableTouch: true
+const redis = new Redis({
+  url: process.env.UPSTASH_REDIS_REST_URL,
+  token: process.env.UPSTASH_REDIS_REST_TOKEN,
 });
 
 const sessionMiddleware = session({
   name: "quizportal.sid",
   secret: process.env.SESSION_SECRET || "dev-secret",
-  store,
+  store: new RedisStore({ client: redis }),
   resave: false,
   saveUninitialized: false,
   cookie: {
