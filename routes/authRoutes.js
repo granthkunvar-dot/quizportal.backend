@@ -9,8 +9,8 @@ const { requireAuth, requireRole } = require("../middleware/authMiddleware");
 const router = express.Router();
 
 const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, 
-  max: 5, 
+  windowMs: 15 * 60 * 1000,
+  max: 20, // ← increased from 5 to 20
   message: { message: "Too many authentication attempts, please try again after 15 minutes." },
   standardHeaders: true,
   legacyHeaders: false,
