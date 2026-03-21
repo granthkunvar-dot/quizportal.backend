@@ -6,26 +6,32 @@ const redis = new Redis({
   token: process.env.UPSTASH_REDIS_REST_TOKEN,
 });
 
-// Custom session store that works directly with Upstash
-const expressSession = require("express-session");
-class UpstashStore extends expressSession.Store {
+class UpstashStore extends session.Store {
   async get(sid, cb) {
     try {
       const data = await redis.get(`sess:${sid}`);
-      cb(null, data || null);
+      if (!data) return cb(null, null);
+      // Upstash auto-parses JSON, so data is already an object
+      const session = typeof data === "string" ? JSON.parse(data) : data;
+      cb(null, session);
     } catch (err) {
       cb(err);
     }
   }
-  async set(sid, session, cb) {
+
+  async set(sid, sessionData, cb) {
     try {
-      const ttl = session.cookie?.maxAge ? Math.floor(session.cookie.maxAge / 1000) : 86400;
-      await redis.set(`sess:${sid}`, session, { ex: ttl });
+      const ttl = sessionData.cookie?.maxAge
+        ? Math.floor(sessionData.cookie.maxAge / 1000)
+        : 86400;
+      // Store as string to avoid double-serialization issues
+      await redis.set(`sess:${sid}`, JSON.stringify(sessionData), { ex: ttl });
       cb(null);
     } catch (err) {
       cb(err);
     }
   }
+
   async destroy(sid, cb) {
     try {
       await redis.del(`sess:${sid}`);
