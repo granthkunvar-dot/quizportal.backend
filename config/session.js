@@ -11,11 +11,11 @@ class UpstashStore extends session.Store {
     try {
       const data = await redis.get(`sess:${sid}`);
       if (!data) return cb(null, null);
-      // Upstash auto-parses JSON, so data is already an object
-      const session = typeof data === "string" ? JSON.parse(data) : data;
-      cb(null, session);
+      const parsed = typeof data === "string" ? JSON.parse(data) : data;
+      cb(null, parsed);
     } catch (err) {
-      cb(err);
+      console.error("Session GET error:", err.message);
+      cb(null, null); // fail open so requests aren't blocked
     }
   }
 
@@ -24,11 +24,11 @@ class UpstashStore extends session.Store {
       const ttl = sessionData.cookie?.maxAge
         ? Math.floor(sessionData.cookie.maxAge / 1000)
         : 86400;
-      // Store as string to avoid double-serialization issues
       await redis.set(`sess:${sid}`, JSON.stringify(sessionData), { ex: ttl });
       cb(null);
     } catch (err) {
-      cb(err);
+      console.error("Session SET error:", err.message);
+      cb(null); // fail open
     }
   }
 
@@ -37,7 +37,8 @@ class UpstashStore extends session.Store {
       await redis.del(`sess:${sid}`);
       cb(null);
     } catch (err) {
-      cb(err);
+      console.error("Session DESTROY error:", err.message);
+      cb(null);
     }
   }
 }
