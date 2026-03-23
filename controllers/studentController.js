@@ -2,6 +2,13 @@ const pool = require("../config/db");
 const { closeSeasonIfExpired, takeDailyRankSnapshot } = require("../services/seasonService");
 const { evaluateAchievements } = require("../services/achievementService");
 const { GoogleGenerativeAI } = require("@google/generative-ai");
+const { OpenAI } = require("openai");
+
+// Connect to NVIDIA using your Vercel key
+const openai = new OpenAI({
+  apiKey: process.env.NVIDIA_API_KEY,
+  baseURL: "https://integrate.api.nvidia.com/v1",
+});
 
 const parsePositiveInt = (value) => {
   const parsed = Number(value);
@@ -566,10 +573,34 @@ const getAIFeedback = async (req, res) => {
   }
 };
 
+// --- NEW AI STUDY BUDDY FUNCTION ---
+const generatePracticeQuiz = async (req, res) => {
+  try {
+    const { topic, count = 5 } = req.body;
+    
+    const completion = await openai.chat.completions.create({
+      model: "mistralai/mistral-large-3-675b-instruct-2512",
+      messages: [{"role": "user", "content": `Generate ${count} multiple choice practice questions about "${topic}". Return ONLY a raw JSON array. Do not include markdown formatting or backticks. Format exactly like this: [{"question": "...", "options": ["a", "b", "c", "d"], "correctIndex": 0, "explanation": "A short, 1-sentence explanation of why the answer is correct."}]`}],
+      max_tokens: 1500,
+    });
+
+    let jsonString = completion.choices[0].message.content.trim();
+    if (jsonString.startsWith('```json')) jsonString = jsonString.slice(7, -3);
+    else if (jsonString.startsWith('```')) jsonString = jsonString.slice(3, -3);
+    
+    const questions = JSON.parse(jsonString.trim());
+    res.status(200).json({ questions });
+  } catch (error) {
+    console.error("Study Buddy error:", error);
+    res.status(500).json({ message: "Failed to generate practice questions" });
+  }
+};
+
 module.exports = {
   listAvailableQuizzes,
   getQuizDetails,
   startQuiz,
   submitQuiz,
-  getAIFeedback
+  getAIFeedback,
+  generatePracticeQuiz // Exported here!
 };
