@@ -580,7 +580,7 @@ const generatePracticeQuiz = async (req, res) => {
     const { topic, count = 5 } = req.body;
     
     const completion = await openai.chat.completions.create({
-      model: "mistralai/mistral-large-3-675b-instruct-2512",
+      model: "mistralai/mistral-small-3.1-24b-instruct-2503", // <-- THE FAST MODEL
       messages: [{"role": "user", "content": `Generate ${count} multiple choice practice questions about "${topic}". Return ONLY a raw JSON array. Do not include markdown formatting or backticks. Format exactly like this: [{"question": "...", "options": ["a", "b", "c", "d"], "correctIndex": 0, "explanation": "A short, 1-sentence explanation of why the answer is correct."}]`}],
       max_tokens: 1500,
     });
@@ -593,7 +593,7 @@ const generatePracticeQuiz = async (req, res) => {
     res.status(200).json({ questions });
   } catch (error) {
     console.error("Study Buddy error:", error);
-    res.status(500).json({ message: "Failed to generate practice questions" });
+    res.status(500).json({ message: "Failed to generate practice questions. The AI server is busy, please try again." });
   }
 };
 
