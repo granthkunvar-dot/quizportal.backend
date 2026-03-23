@@ -550,7 +550,7 @@ const getAIFeedback = async (req, res) => {
     }
 
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
     const prompt = `A student got these questions wrong in a quiz:\n${wrongAnswers.map((q, i) =>
       `${i + 1}. Question: ${q.question_text}\n   Their answer: ${q.student_answer || 'No answer given'}\n   Correct answer: ${q.correct_answer}\n   Difficulty: ${q.difficulty}`
