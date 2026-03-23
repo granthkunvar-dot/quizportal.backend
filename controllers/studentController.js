@@ -697,5 +697,6 @@ module.exports = {
   listAvailableQuizzes,
   getQuizDetails,
   startQuiz,
-  submitQuiz
+  submitQuiz,
+  getAIFeedback
 };
