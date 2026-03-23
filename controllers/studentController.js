@@ -724,10 +724,3 @@ module.exports = {
   submitQuiz,
   getAIFeedback
 };
-module.exports = {
-  listAvailableQuizzes,
-  getQuizDetails,
-  startQuiz,
-  submitQuiz,
-  getAIFeedback
-};
