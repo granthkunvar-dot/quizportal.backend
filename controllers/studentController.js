@@ -574,26 +574,32 @@ const getAIFeedback = async (req, res) => {
   }
 };
 
-// --- NEW AI STUDY BUDDY FUNCTION ---
+// --- NEW AI STUDY BUDDY FUNCTION (BULLETPROOF) ---
 const generatePracticeQuiz = async (req, res) => {
   try {
     const { topic, count = 5 } = req.body;
     
+    // 1. Using the proven, highly-intelligent model that worked for the Admin UI
     const completion = await openai.chat.completions.create({
-      model: "mistralai/mistral-small-3.1-24b-instruct-2503", // <-- THE FAST MODEL
+      model: "mistralai/mistral-large-3-675b-instruct-2512",
       messages: [{"role": "user", "content": `Generate ${count} multiple choice practice questions about "${topic}". Return ONLY a raw JSON array. Do not include markdown formatting or backticks. Format exactly like this: [{"question": "...", "options": ["a", "b", "c", "d"], "correctIndex": 0, "explanation": "A short, 1-sentence explanation of why the answer is correct."}]`}],
       max_tokens: 1500,
     });
 
     let jsonString = completion.choices[0].message.content.trim();
-    if (jsonString.startsWith('```json')) jsonString = jsonString.slice(7, -3);
-    else if (jsonString.startsWith('```')) jsonString = jsonString.slice(3, -3);
     
-    const questions = JSON.parse(jsonString.trim());
+    // 2. BULLETPROOF PARSING: Use Regex to find the JSON array even if the AI adds text before/after it
+    const match = jsonString.match(/\[[\s\S]*\]/);
+    if (!match) {
+      throw new Error("AI did not return a valid JSON array.");
+    }
+    
+    const questions = JSON.parse(match[0]);
     res.status(200).json({ questions });
   } catch (error) {
-    console.error("Study Buddy error:", error);
-    res.status(500).json({ message: "Failed to generate practice questions. The AI server is busy, please try again." });
+    // 3. Log the exact error to Vercel so we can see it!
+    console.error("Study Buddy error details:", error.message || error);
+    res.status(500).json({ message: "Failed to generate practice questions. Please try again." });
   }
 };
 
