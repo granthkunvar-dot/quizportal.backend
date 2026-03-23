@@ -1,5 +1,12 @@
 const pool = require("../config/db");
 const { parseQuizText } = require("../services/quizParserService");
+const { OpenAI } = require("openai");
+
+// Configure OpenAI to use NVIDIA's endpoint
+const openai = new OpenAI({
+  apiKey: process.env.NVIDIA_API_KEY,
+  baseURL: "https://integrate.api.nvidia.com/v1",
+});
 
 // Helper to log admin actions
 const logAdminAction = async (adminId, actionType, entityType, entityId, beforeState, afterState, connection = pool) => {
@@ -171,6 +178,30 @@ exports.createQuiz = async (req, res) => {
   }
 };
 
+// --- NEW AI QUESTION GENERATOR FUNCTION ---
+exports.generateQuestionsAI = async (req, res) => {
+  try {
+    const { topic, count = 5 } = req.body;
+    
+    const completion = await openai.chat.completions.create({
+      model: "mistralai/mistral-large-3-675b-instruct-2512",
+      messages: [{"role": "user", "content": `Generate ${count} multiple choice questions about "${topic}". Return ONLY a raw JSON array. Do not include markdown formatting or backticks. Format exactly like this: [{"question": "...", "options": ["a", "b", "c", "d"], "correctIndex": 0}]`}],
+      max_tokens: 1024,
+    });
+
+    let jsonString = completion.choices[0].message.content.trim();
+    // Clean up if the AI adds markdown code blocks
+    if (jsonString.startsWith('```json')) jsonString = jsonString.slice(7, -3);
+    else if (jsonString.startsWith('```')) jsonString = jsonString.slice(3, -3);
+    
+    const questions = JSON.parse(jsonString.trim());
+    res.status(200).json({ questions });
+  } catch (error) {
+    console.error("AI Generation error:", error);
+    res.status(500).json({ message: "Failed to generate questions" });
+  }
+};
+
 exports.bulkParseQuiz = async (req, res) => {
   const { rawText, expectedCount } = req.body;
 
@@ -217,7 +248,7 @@ exports.bulkPublishQuiz = async (req, res) => {
     for (const q of parsedData) {
       const [qRes] = await connection.execute(
         `INSERT INTO questions (quiz_id, question_text, question_type, difficulty, cognitive_level, points, order_index)
-               VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [quizId, q.question_text, q.question_type, q.difficulty, q.cognitive_level, q.points, parsedData.indexOf(q) + 1]
       );
       const questionId = qRes.insertId;
@@ -413,20 +444,16 @@ exports.extendSeason = async (req, res) => {
 
 exports.forceCloseSeason = async (req, res) => {
   const adminId = req.session.user.userId;
-  // We can pull in the closeSeason logic from seasonService.js, bypassing time checks.
   const { closeSeasonIfExpired } = require("../services/seasonService");
 
   const conn = await pool.getConnection();
   try {
-    // Find active season
     const [active] = await conn.execute("SELECT season_id FROM seasons WHERE is_active = 1 LIMIT 1");
     if (active.length === 0) return res.status(400).json({ message: "No active season to close" });
     const sId = active[0].season_id;
 
-    // Force expiration to now so the service closes it immediately
     await conn.execute("UPDATE seasons SET end_date = CURRENT_TIMESTAMP WHERE is_active = 1");
 
-    // Release connection so the service can use the pool normally
     conn.release();
 
     await closeSeasonIfExpired();
@@ -511,7 +538,7 @@ exports.getAuditLogs = async (req, res) => {
 exports.updateUserRole = async (req, res) => {
   const adminId = req.session.user.userId;
   const targetUserId = req.params.id;
-  const { role } = req.body; // 'student', 'instructor', 'admin', 'super_admin'
+  const { role } = req.body;
 
   const validRoles = ['student', 'instructor', 'admin', 'super_admin'];
   if (!validRoles.includes(role)) return res.status(400).json({ message: "Invalid role" });
@@ -520,7 +547,6 @@ exports.updateUserRole = async (req, res) => {
     const [old] = await pool.execute("SELECT role FROM users WHERE user_id = ?", [targetUserId]);
     if (old.length === 0) return res.status(404).json({ message: "User not found" });
 
-    // Prevent deleting last super_admin
     if (old[0].role === 'super_admin' && role !== 'super_admin') {
       const [saCount] = await pool.execute("SELECT COUNT(*) as count FROM users WHERE role = 'super_admin'");
       if (saCount[0].count <= 1) {
