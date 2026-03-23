@@ -13,8 +13,7 @@ const authLimiter = rateLimit({
   max: 20,
   message: { message: "Too many authentication attempts, please try again after 15 minutes." },
   standardHeaders: true,
-  legacyHeaders: false,
-  keyGenerator: (req) => req.ip
+  legacyHeaders: false
 });
 
 router.post("/register", authLimiter, asyncHandler(register));
