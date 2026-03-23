@@ -1,18 +1,13 @@
 const express = require("express");
-// Fixed paths for middleware and controllers
 const asyncHandler = require("../middleware/asyncHandler");
 const { requireAuth, requireRole } = require("../middleware/authMiddleware");
-const { listAvailableQuizzes, getQuizDetails, startQuiz, submitQuiz } = require("../controllers/studentController");
+const { listAvailableQuizzes, getQuizDetails, startQuiz, submitQuiz, getAIFeedback } = require("../controllers/studentController");
 const { getProfile, getLiveDashboardStats, updateProfile } = require("../controllers/profileController");
 const multer = require("multer");
 
-const { listAvailableQuizzes, getQuizDetails, startQuiz, submitQuiz, getAIFeedback } = require("../controllers/studentController");
-
-router.get("/attempt/:attemptId/feedback", asyncHandler(getAIFeedback));
-
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 2 * 1024 * 1024 }, 
+  limits: { fileSize: 2 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     if (file.mimetype.startsWith("image/")) {
       cb(null, true);
@@ -23,13 +18,13 @@ const upload = multer({
 });
 
 const router = express.Router();
-
 router.use(requireAuth, requireRole("student", "admin"));
 
 router.get("/quizzes", asyncHandler(listAvailableQuizzes));
 router.get("/quiz/:quizId", asyncHandler(getQuizDetails));
 router.post("/attempt/start/:quizId", asyncHandler(startQuiz));
 router.post("/attempt/:attemptId/submit", asyncHandler(submitQuiz));
+router.get("/attempt/:attemptId/feedback", asyncHandler(getAIFeedback));
 router.get("/profile", asyncHandler(getProfile));
 router.put("/profile", upload.single("avatar"), asyncHandler(updateProfile));
 router.get("/dashboard/live-stats", asyncHandler(getLiveDashboardStats));
