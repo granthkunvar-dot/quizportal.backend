@@ -2,14 +2,6 @@ const pool = require("../config/db");
 const { closeSeasonIfExpired, takeDailyRankSnapshot } = require("../services/seasonService");
 const { evaluateAchievements } = require("../services/achievementService");
 const { GoogleGenerativeAI } = require("@google/generative-ai");
-const { OpenAI } = require("openai");
-
-// Connect to NVIDIA using your Vercel key
-const openai = new OpenAI({
-  apiKey: process.env.NVIDIA_API_KEY,
-  baseURL: "https://integrate.api.nvidia.com/v1",
-  timeout: 30000,
-});
 
 const parsePositiveInt = (value) => {
   const parsed = Number(value);
@@ -574,12 +566,11 @@ const getAIFeedback = async (req, res) => {
   }
 };
 
-// --- NEW AI STUDY BUDDY FUNCTION (POWERED BY GEMINI) ---
+// --- NEW AI STUDY BUDDY FUNCTION (100% GEMINI) ---
 const generatePracticeQuiz = async (req, res) => {
   try {
     const { topic, count = 5 } = req.body;
     
-    // 1. Use the Gemini SDK that is already imported at the top of your file!
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
     const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
@@ -588,15 +579,15 @@ const generatePracticeQuiz = async (req, res) => {
     Format exactly like this: 
     [{"question": "...", "options": ["a", "b", "c", "d"], "correctIndex": 0, "explanation": "A short, 1-sentence explanation of why the answer is correct."}]`;
 
-    // 2. Generate the content
     const result = await model.generateContent(prompt);
     let jsonString = result.response.text().trim();
     
-    // 3. Bulletproof JSON parsing
+    // Fallback cleanup if the AI still insists on adding markdown blocks
+    if (jsonString.startsWith('```json')) jsonString = jsonString.slice(7, -3);
+    else if (jsonString.startsWith('```')) jsonString = jsonString.slice(3, -3);
+
     const match = jsonString.match(/\[[\s\S]*\]/);
-    if (!match) {
-      throw new Error("AI did not return a valid JSON array.");
-    }
+    if (!match) throw new Error("AI did not return a valid JSON array.");
     
     const questions = JSON.parse(match[0]);
     res.status(200).json({ questions });
@@ -613,5 +604,5 @@ module.exports = {
   startQuiz,
   submitQuiz,
   getAIFeedback,
-  generatePracticeQuiz // Exported here!
+  generatePracticeQuiz 
 };
