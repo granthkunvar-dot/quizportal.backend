@@ -6,6 +6,10 @@ const { listAvailableQuizzes, getQuizDetails, startQuiz, submitQuiz } = require(
 const { getProfile, getLiveDashboardStats, updateProfile } = require("../controllers/profileController");
 const multer = require("multer");
 
+const { listAvailableQuizzes, getQuizDetails, startQuiz, submitQuiz, getAIFeedback } = require("../controllers/studentController");
+
+router.get("/attempt/:attemptId/feedback", asyncHandler(getAIFeedback));
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 2 * 1024 * 1024 }, 
