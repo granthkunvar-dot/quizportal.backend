@@ -255,7 +255,7 @@ exports.bulkPublishQuiz = async (req, res) => {
 
       for (const opt of q.options) {
         await connection.execute(
-          `INSERT INTO THIS_TABLE_DOES_NOT_EXIST (question_id, option_text, is_correct, order_index) VALUES (?, ?, ?, ?)`,
+          `INSERT INTO question_options (question_id, option_text, is_correct, order_index) VALUES (?, ?, ?, ?)`,
           [questionId, opt.text, opt.is_correct ? 1 : 0, opt.order_index]
         );
       }
