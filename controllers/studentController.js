@@ -676,12 +676,36 @@ const getAIFeedback = async (req, res) => {
       return res.json({ feedback: "Perfect score! You answered everything correctly. Excellent work!" });
     }
 
+    const { GoogleGenerativeAI } = require("@google/generative-ai");
+
+const getAIFeedback = async (req, res) => {
+  try {
+    const { attemptId } = req.params;
+    const studentId = req.session.user.userId;
+
+    const [wrongAnswers] = await pool.execute(
+      `SELECT q.question_text, q.difficulty,
+              ao.option_text as student_answer,
+              correct_opt.option_text as correct_answer
+       FROM answers a
+       JOIN questions q ON a.question_id = q.question_id
+       LEFT JOIN question_options ao ON a.selected_option_id = ao.option_id
+       JOIN question_options correct_opt ON correct_opt.question_id = q.question_id AND correct_opt.is_correct = 1
+       JOIN attempts att ON a.attempt_id = att.attempt_id
+       WHERE a.attempt_id = ? AND att.student_id = ? AND a.is_correct = 0`,
+      [attemptId, studentId]
+    );
+
+    if (wrongAnswers.length === 0) {
+      return res.json({ feedback: "Perfect score! You answered everything correctly. Excellent work!" });
+    }
+
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
     const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
     const prompt = `A student got these questions wrong:\n${wrongAnswers.map((q, i) =>
       `${i+1}. Question: ${q.question_text}\n   Their answer: ${q.student_answer || 'No answer'}\n   Correct answer: ${q.correct_answer}\n   Difficulty: ${q.difficulty}`
-    ).join('\n\n')}\n\nGive a brief encouraging 3-4 sentence personalized study recommendation. Be specific about what topics to review.`;
+    ).join('\n\n')}\n\nGive a brief encouraging 3-4 sentence personalized study recommendation.`;
 
     const result = await model.generateContent(prompt);
     const feedback = result.response.text();
@@ -693,6 +717,13 @@ const getAIFeedback = async (req, res) => {
   }
 };
 
+module.exports = {
+  listAvailableQuizzes,
+  getQuizDetails,
+  startQuiz,
+  submitQuiz,
+  getAIFeedback
+};
 module.exports = {
   listAvailableQuizzes,
   getQuizDetails,
