@@ -1,6 +1,7 @@
 const pool = require("../config/db");
 const { closeSeasonIfExpired, takeDailyRankSnapshot } = require("../services/seasonService");
 const { evaluateAchievements } = require("../services/achievementService");
+const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 const parsePositiveInt = (value) => {
   const parsed = Number(value);
@@ -37,7 +38,6 @@ const getCognitiveMultiplier = (cog) => {
   }
 };
 
-// MySQL 5.7 compatible rank calculation (no window functions)
 const getMainRank = async (connection, seasonId, userId) => {
   const [rows] = await connection.execute(
     `SELECT COUNT(*) + 1 as final_rank
@@ -77,24 +77,17 @@ const listAvailableQuizzes = async (req, res) => {
 
   const [rows] = await pool.execute(
     `SELECT
-      q.quiz_id,
-      q.title,
-      q.description,
-      q.category,
-      q.created_by,
-      u.full_name AS instructor_name,
-      q.created_at,
+      q.quiz_id, q.title, q.description, q.category, q.created_by,
+      u.full_name AS instructor_name, q.created_at,
       COUNT(ques.question_id) AS question_count
     FROM quizzes q
     INNER JOIN users u ON u.user_id = q.created_by
     LEFT JOIN questions ques ON ques.quiz_id = q.quiz_id
     WHERE q.is_published = 1
       AND NOT EXISTS (
-        SELECT 1
-        FROM attempts a
-        WHERE a.quiz_id = q.quiz_id
-          AND a.student_id = ?
-          AND a.status IN ('submitted', 'graded')
+        SELECT 1 FROM attempts a
+        WHERE a.quiz_id = q.quiz_id AND a.student_id = ?
+        AND a.status IN ('submitted', 'graded')
       )
     GROUP BY q.quiz_id, q.title, q.description, q.category, q.created_by, u.full_name, q.created_at
     ORDER BY q.created_at DESC`,
@@ -152,7 +145,6 @@ const startQuiz = async (req, res) => {
   if (req.session.user.role !== 'student') {
     return res.status(403).json({ message: "Only students may participate in quizzes." });
   }
-
   if (!quizId) {
     return res.status(400).json({ message: "Invalid quiz id" });
   }
@@ -161,9 +153,7 @@ const startQuiz = async (req, res) => {
 
   const [quizRows] = await pool.execute(
     `SELECT q.quiz_id, q.title, q.description, q.created_by, q.is_published
-     FROM quizzes q
-     WHERE q.quiz_id = ? AND q.is_published = 1
-     LIMIT 1`,
+     FROM quizzes q WHERE q.quiz_id = ? AND q.is_published = 1 LIMIT 1`,
     [quizId]
   );
 
@@ -187,7 +177,6 @@ const startQuiz = async (req, res) => {
     if (questionCheck.length === 0) {
       return res.status(400).json({ message: "Quiz has no questions to attempt" });
     }
-
     try {
       const [attemptResult] = await pool.execute(
         "INSERT INTO attempts (quiz_id, student_id, status) VALUES (?, ?, 'in_progress')",
@@ -216,9 +205,7 @@ const startQuiz = async (req, res) => {
 
   const [questionRows] = await pool.execute(
     `SELECT question_id, question_text, question_type, points, order_index, category, difficulty, cognitive_level
-     FROM questions
-     WHERE quiz_id = ?
-     ORDER BY order_index ASC`,
+     FROM questions WHERE quiz_id = ? ORDER BY order_index ASC`,
     [quizId]
   );
 
@@ -227,76 +214,45 @@ const startQuiz = async (req, res) => {
   if (questionRows.length > 0) {
     const questionIds = questionRows.map((q) => q.question_id);
     const placeholders = questionIds.map(() => "?").join(",");
-
     const [oRows] = await pool.execute(
       `SELECT option_id, question_id, option_text, order_index
-       FROM question_options
-       WHERE question_id IN (${placeholders})
+       FROM question_options WHERE question_id IN (${placeholders})
        ORDER BY question_id ASC, order_index ASC`,
       questionIds
     );
     optionRows = oRows;
-
     const [mRows] = await pool.execute(
       `SELECT metadata_id, question_id, meta_key, meta_value
-       FROM question_metadata
-       WHERE question_id IN (${placeholders})`,
+       FROM question_metadata WHERE question_id IN (${placeholders})`,
       questionIds
     );
     metadataRows = mRows;
   }
 
   const deadline = buildDeadline(attempt.started_at);
-  const remainingSeconds = Math.max(
-    0,
-    Math.floor((deadline.getTime() - Date.now()) / 1000)
-  );
+  const remainingSeconds = Math.max(0, Math.floor((deadline.getTime() - Date.now()) / 1000));
 
   const questionsWithOptions = questionRows.map((q) => {
     const options = optionRows
       .filter((o) => o.question_id === q.question_id)
-      .map((o) => ({
-        optionId: o.option_id,
-        optionText: o.option_text,
-        orderIndex: o.order_index
-      }));
-
+      .map((o) => ({ optionId: o.option_id, optionText: o.option_text, orderIndex: o.order_index }));
     const metadata = metadataRows
       .filter((m) => m.question_id === q.question_id)
-      .reduce((acc, curr) => {
-        acc[curr.meta_key] = curr.meta_value;
-        return acc;
-      }, {});
-
+      .reduce((acc, curr) => { acc[curr.meta_key] = curr.meta_value; return acc; }, {});
     return {
-      questionId: q.question_id,
-      questionText: q.question_text,
-      questionType: q.question_type,
-      points: Number(q.points),
-      orderIndex: q.order_index,
-      category: q.category,
-      difficulty: q.difficulty,
-      cognitiveLevel: q.cognitive_level,
-      metadata,
-      options
+      questionId: q.question_id, questionText: q.question_text, questionType: q.question_type,
+      points: Number(q.points), orderIndex: q.order_index, category: q.category,
+      difficulty: q.difficulty, cognitiveLevel: q.cognitive_level, metadata, options
     };
   });
 
   return res.status(200).json({
     message: existingAttemptRows.length > 0 ? "Quiz resumed" : "Quiz started",
     attempt: {
-      attemptId: attempt.attempt_id,
-      status: attempt.status,
-      startedAt: attempt.started_at,
-      deadline: toIso(deadline),
-      timeLimitMinutes: process.env.QUIZ_TIME_LIMIT || 30,
-      remainingSeconds
+      attemptId: attempt.attempt_id, status: attempt.status, startedAt: attempt.started_at,
+      deadline: toIso(deadline), timeLimitMinutes: process.env.QUIZ_TIME_LIMIT || 30, remainingSeconds
     },
-    quiz: {
-      quizId: quizRows[0].quiz_id,
-      title: quizRows[0].title,
-      description: quizRows[0].description
-    },
+    quiz: { quizId: quizRows[0].quiz_id, title: quizRows[0].title, description: quizRows[0].description },
     questions: questionsWithOptions
   });
 };
@@ -309,7 +265,6 @@ const submitQuiz = async (req, res) => {
   if (req.session.user.role !== 'student') {
     return res.status(403).json({ message: "Only students may participate in quizzes." });
   }
-
   if (!attemptId) {
     return res.status(400).json({ message: "Invalid attempt id" });
   }
@@ -319,43 +274,31 @@ const submitQuiz = async (req, res) => {
 
   const [attemptRows] = await pool.execute(
     `SELECT a.attempt_id, a.quiz_id, a.student_id, a.started_at, a.submitted_at, a.status, q.category
-     FROM attempts a
-     JOIN quizzes q ON a.quiz_id = q.quiz_id
-     WHERE a.attempt_id = ? AND a.student_id = ?
-     LIMIT 1`,
+     FROM attempts a JOIN quizzes q ON a.quiz_id = q.quiz_id
+     WHERE a.attempt_id = ? AND a.student_id = ? LIMIT 1`,
     [attemptId, studentId]
   );
 
-  if (attemptRows.length === 0) {
-    return res.status(404).json({ message: "Attempt not found" });
-  }
+  if (attemptRows.length === 0) return res.status(404).json({ message: "Attempt not found" });
 
   const attempt = attemptRows[0];
-  if (attempt.status !== "in_progress") {
-    return res.status(409).json({ message: "Attempt already submitted" });
-  }
+  if (attempt.status !== "in_progress") return res.status(409).json({ message: "Attempt already submitted" });
 
   const deadline = buildDeadline(attempt.started_at);
   const now = new Date();
-
   const GRACE_PERIOD_MS = 10000;
   if (now.getTime() > deadline.getTime() + GRACE_PERIOD_MS) {
     return res.status(403).json({ message: "Attempt time has expired" });
   }
-
   const timedOut = now.getTime() > deadline.getTime();
 
   const [questionRows] = await pool.execute(
     `SELECT question_id, question_text, question_type, points, category, difficulty, cognitive_level
-     FROM questions
-     WHERE quiz_id = ?
-     ORDER BY order_index ASC`,
+     FROM questions WHERE quiz_id = ? ORDER BY order_index ASC`,
     [attempt.quiz_id]
   );
 
-  if (questionRows.length === 0) {
-    return res.status(400).json({ message: "Quiz has no questions" });
-  }
+  if (questionRows.length === 0) return res.status(400).json({ message: "Quiz has no questions" });
 
   let optionRows = [];
   if (questionRows.length > 0) {
@@ -363,8 +306,7 @@ const submitQuiz = async (req, res) => {
     const placeholders = questionIds.map(() => "?").join(",");
     const [oRows] = await pool.execute(
       `SELECT option_id, question_id, option_text, is_correct
-       FROM question_options
-       WHERE question_id IN (${placeholders})`,
+       FROM question_options WHERE question_id IN (${placeholders})`,
       questionIds
     );
     optionRows = oRows;
@@ -384,12 +326,9 @@ const submitQuiz = async (req, res) => {
 
   for (const question of questionRows) {
     const submittedOptionId = answerMap.has(question.question_id) ? answerMap.get(question.question_id) : null;
-
     let isCorrect = false;
     let submittedOptionText = null;
-
     const optionsForQ = optionRows.filter(o => o.question_id === question.question_id);
-
     if (submittedOptionId) {
       const selectedOption = optionsForQ.find(o => o.option_id === submittedOptionId);
       if (selectedOption) {
@@ -397,18 +336,10 @@ const submitQuiz = async (req, res) => {
         isCorrect = (selectedOption.is_correct === 1);
       }
     }
-
     const awardedPoints = isCorrect ? Number(question.points) : 0;
     maxScore += Number(question.points);
     score += awardedPoints;
-
-    evaluatedAnswers.push({
-      questionId: question.question_id,
-      selectedOptionId: submittedOptionId,
-      answerText: submittedOptionText,
-      isCorrect,
-      awardedPoints
-    });
+    evaluatedAnswers.push({ questionId: question.question_id, selectedOptionId: submittedOptionId, answerText: submittedOptionText, isCorrect, awardedPoints });
   }
 
   const connection = await pool.getConnection();
@@ -430,26 +361,13 @@ const submitQuiz = async (req, res) => {
         `INSERT INTO answers (attempt_id, question_id, selected_option_id, answer_text, is_correct, awarded_points)
          VALUES (?, ?, ?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE
-           selected_option_id = VALUES(selected_option_id),
-           answer_text = VALUES(answer_text),
-           is_correct = VALUES(is_correct),
-           awarded_points = VALUES(awarded_points),
-           answered_at = CURRENT_TIMESTAMP`,
-        [
-          attemptId,
-          answer.questionId,
-          answer.selectedOptionId || null,
-          answer.answerText || null,
-          answer.isCorrect ? 1 : 0,
-          answer.awardedPoints
-        ]
+           selected_option_id = VALUES(selected_option_id), answer_text = VALUES(answer_text),
+           is_correct = VALUES(is_correct), awarded_points = VALUES(awarded_points), answered_at = CURRENT_TIMESTAMP`,
+        [attemptId, answer.questionId, answer.selectedOptionId || null, answer.answerText || null, answer.isCorrect ? 1 : 0, answer.awardedPoints]
       );
     }
 
-    const [seasonRows] = await connection.execute(
-      `SELECT * FROM seasons WHERE is_active = 1 FOR UPDATE`
-    );
-
+    const [seasonRows] = await connection.execute(`SELECT * FROM seasons WHERE is_active = 1 FOR UPDATE`);
     let activeSeason = seasonRows.length > 0 ? seasonRows[0] : null;
 
     if (!activeSeason) {
@@ -473,38 +391,29 @@ const submitQuiz = async (req, res) => {
 
     if (isMainMode) {
       const [prevAttemptsRows] = await connection.execute(
-        `SELECT COUNT(*) as count FROM attempts 
-         WHERE quiz_id = ? AND student_id = ? AND status = 'graded' AND attempt_id != ?`,
+        `SELECT COUNT(*) as count FROM attempts WHERE quiz_id = ? AND student_id = ? AND status = 'graded' AND attempt_id != ?`,
         [attempt.quiz_id, studentId, attemptId]
       );
-      const prevAttemptsCount = Number(prevAttemptsRows[0].count);
-      diminishingFactor = 1 / Math.sqrt(prevAttemptsCount + 1);
+      diminishingFactor = 1 / Math.sqrt(Number(prevAttemptsRows[0].count) + 1);
       rankBefore = await getMainRank(connection, activeSeason.season_id, studentId);
     } else {
       const [todayAttemptsRows] = await connection.execute(
-        `SELECT COUNT(*) as count FROM attempts a
-         JOIN quizzes q ON a.quiz_id = q.quiz_id
-         WHERE a.student_id = ? AND q.category = ? AND a.status = 'graded' 
-           AND DATE(a.submitted_at) = CURRENT_DATE AND a.attempt_id != ?`,
+        `SELECT COUNT(*) as count FROM attempts a JOIN quizzes q ON a.quiz_id = q.quiz_id
+         WHERE a.student_id = ? AND q.category = ? AND a.status = 'graded' AND DATE(a.submitted_at) = CURRENT_DATE AND a.attempt_id != ?`,
         [studentId, attempt.category, attemptId]
       );
-      const dailyCount = Number(todayAttemptsRows[0].count);
-      diminishingFactor = Math.max(0.2, 1.0 - (dailyCount * 0.2));
+      diminishingFactor = Math.max(0.2, 1.0 - (Number(todayAttemptsRows[0].count) * 0.2));
       rankBefore = await getSideRank(connection, activeSeason.season_id, attempt.category, studentId);
     }
 
     for (const q of questionRows) {
       const ans = evaluatedAnswers.find(a => a.questionId === q.question_id);
-
       const diffMult = getDifficultyMultiplier(q.difficulty);
       const cogMult = getCognitiveMultiplier(q.cognitive_level);
-
       const baseEarned = (ans && ans.isCorrect) ? Number(q.points) : 0;
       const baseMax = Number(q.points);
-
       let weightedEarned = baseEarned * diffMult * cogMult;
       let weightedMax = baseMax * diffMult * cogMult;
-
       if (!isMainMode) {
         weightedEarned = weightedEarned * 0.6 * diminishingFactor;
         weightedMax = weightedMax * 0.6 * diminishingFactor;
@@ -512,10 +421,8 @@ const submitQuiz = async (req, res) => {
         weightedEarned = weightedEarned * diminishingFactor;
         weightedMax = weightedMax * diminishingFactor;
       }
-
       totalWeightedEarnedPoints += weightedEarned;
       totalWeightedMaxPoints += weightedMax;
-
       const cat = q.category || 'Uncategorized';
       if (!categoryStats[cat]) categoryStats[cat] = { earned: 0, max: 0 };
       categoryStats[cat].earned += weightedEarned;
@@ -534,40 +441,31 @@ const submitQuiz = async (req, res) => {
            total_attempts = total_attempts + 1`,
         [studentId, activeSeason.season_id, totalWeightedEarnedPoints, totalWeightedMaxPoints]
       );
-
       await connection.execute(
         `UPDATE users SET lifetime_aura = lifetime_aura + ? WHERE user_id = ?`,
         [totalWeightedEarnedPoints, studentId]
       );
-
       for (const [cat, stats] of Object.entries(categoryStats)) {
         await connection.execute(
           `INSERT INTO leaderboard_category_stats (user_id, season_id, category, total_points, total_max_points)
            VALUES (?, ?, ?, ?, ?)
-           ON DUPLICATE KEY UPDATE
-             total_points = total_points + VALUES(total_points),
-             total_max_points = total_max_points + VALUES(total_max_points)`,
+           ON DUPLICATE KEY UPDATE total_points = total_points + VALUES(total_points), total_max_points = total_max_points + VALUES(total_max_points)`,
           [studentId, activeSeason.season_id, cat, stats.earned, stats.max]
         );
       }
-
       const [auraRows] = await connection.execute(
         `SELECT aura_points FROM leaderboard_stats WHERE season_id = ? AND user_id = ?`,
         [activeSeason.season_id, studentId]
       );
       if (auraRows.length > 0) newAuraTotal = Number(auraRows[0].aura_points);
       rankAfter = await getMainRank(connection, activeSeason.season_id, studentId);
-
     } else {
       await connection.execute(
         `INSERT INTO side_leaderboard_stats (user_id, season_id, category, side_aura_points, total_attempts)
          VALUES (?, ?, ?, ?, 1)
-         ON DUPLICATE KEY UPDATE
-           side_aura_points = side_aura_points + VALUES(side_aura_points),
-           total_attempts = total_attempts + 1`,
+         ON DUPLICATE KEY UPDATE side_aura_points = side_aura_points + VALUES(side_aura_points), total_attempts = total_attempts + 1`,
         [studentId, activeSeason.season_id, attempt.category, totalWeightedEarnedPoints]
       );
-
       const [sideAuraRows] = await connection.execute(
         `SELECT side_aura_points FROM side_leaderboard_stats WHERE season_id = ? AND category = ? AND user_id = ?`,
         [activeSeason.season_id, attempt.category, studentId]
@@ -578,25 +476,18 @@ const submitQuiz = async (req, res) => {
 
     const todayStr = now.toISOString().split('T')[0];
     const [userStreakRows] = await connection.execute(
-      `SELECT current_streak, last_activity_date FROM users WHERE user_id = ?`,
-      [studentId]
+      `SELECT current_streak, last_activity_date FROM users WHERE user_id = ?`, [studentId]
     );
-
     if (userStreakRows.length > 0) {
       const u = userStreakRows[0];
       const lastActivityStr = u.last_activity_date ? new Date(u.last_activity_date).toISOString().split('T')[0] : null;
       let newStreak = u.current_streak;
-
       if (lastActivityStr !== todayStr) {
         if (lastActivityStr) {
           const yesterday = new Date(now);
           yesterday.setDate(yesterday.getDate() - 1);
           const yesterdayStr = yesterday.toISOString().split('T')[0];
-          if (lastActivityStr === yesterdayStr) {
-            newStreak += 1;
-          } else {
-            newStreak = 1;
-          }
+          newStreak = lastActivityStr === yesterdayStr ? newStreak + 1 : 1;
         } else {
           newStreak = 1;
         }
@@ -610,21 +501,10 @@ const submitQuiz = async (req, res) => {
     const unlockedAchievements = await evaluateAchievements(studentId, connection);
 
     req.submissionResultPayload = isMainMode ? {
-      mode: 'main',
-      auraGained,
-      newSeasonAura: newAuraTotal,
-      rankBefore,
-      rankAfter,
-      unlockedAchievements
+      mode: 'main', auraGained, newSeasonAura: newAuraTotal, rankBefore, rankAfter, unlockedAchievements
     } : {
-      mode: 'side',
-      category: attempt.category,
-      auraGained,
-      efficiencyPercent: Math.round(diminishingFactor * 100),
-      newSideAura: newAuraTotal,
-      rankBefore,
-      rankAfter,
-      unlockedAchievements
+      mode: 'side', category: attempt.category, auraGained,
+      efficiencyPercent: Math.round(diminishingFactor * 100), newSideAura: newAuraTotal, rankBefore, rankAfter, unlockedAchievements
     };
 
     await connection.commit();
@@ -638,45 +518,14 @@ const submitQuiz = async (req, res) => {
   return res.status(200).json({
     message: "Quiz submitted successfully",
     attempt: {
-      attemptId,
-      quizId: attempt.quiz_id,
-      timedOut,
-      startedAt: attempt.started_at,
-      deadline: toIso(deadline),
-      submittedAt: now.toISOString(),
-      score,
-      maxScore
+      attemptId, quizId: attempt.quiz_id, timedOut,
+      startedAt: attempt.started_at, deadline: toIso(deadline),
+      submittedAt: now.toISOString(), score, maxScore
     },
     answers: evaluatedAnswers,
     resultPayload: req.submissionResultPayload
   });
 };
-
-const { GoogleGenerativeAI } = require("@google/generative-ai");
-
-const getAIFeedback = async (req, res) => {
-  try {
-    const { attemptId } = req.params;
-    const studentId = req.session.user.userId;
-
-    const [wrongAnswers] = await pool.execute(
-      `SELECT q.question_text, q.difficulty,
-              ao.option_text as student_answer,
-              correct_opt.option_text as correct_answer
-       FROM answers a
-       JOIN questions q ON a.question_id = q.question_id
-       LEFT JOIN question_options ao ON a.selected_option_id = ao.option_id
-       JOIN question_options correct_opt ON correct_opt.question_id = q.question_id AND correct_opt.is_correct = 1
-       JOIN attempts att ON a.attempt_id = att.attempt_id
-       WHERE a.attempt_id = ? AND att.student_id = ? AND a.is_correct = 0`,
-      [attemptId, studentId]
-    );
-
-    if (wrongAnswers.length === 0) {
-      return res.json({ feedback: "Perfect score! You answered everything correctly. Excellent work!" });
-    }
-
-    const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 const getAIFeedback = async (req, res) => {
   try {
@@ -703,9 +552,9 @@ const getAIFeedback = async (req, res) => {
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
     const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-    const prompt = `A student got these questions wrong:\n${wrongAnswers.map((q, i) =>
-      `${i+1}. Question: ${q.question_text}\n   Their answer: ${q.student_answer || 'No answer'}\n   Correct answer: ${q.correct_answer}\n   Difficulty: ${q.difficulty}`
-    ).join('\n\n')}\n\nGive a brief encouraging 3-4 sentence personalized study recommendation.`;
+    const prompt = `A student got these questions wrong in a quiz:\n${wrongAnswers.map((q, i) =>
+      `${i + 1}. Question: ${q.question_text}\n   Their answer: ${q.student_answer || 'No answer given'}\n   Correct answer: ${q.correct_answer}\n   Difficulty: ${q.difficulty}`
+    ).join('\n\n')}\n\nGive a brief encouraging 3-4 sentence personalized study recommendation. Be specific about what topics to review. Keep it positive and motivating.`;
 
     const result = await model.generateContent(prompt);
     const feedback = result.response.text();
@@ -713,7 +562,7 @@ const getAIFeedback = async (req, res) => {
     return res.json({ feedback });
   } catch (error) {
     console.error("AI Feedback error:", error);
-    return res.status(500).json({ feedback: "Unable to generate AI feedback at this time." });
+    return res.status(500).json({ feedback: "Unable to generate AI feedback at this time. Please try again later." });
   }
 };
 
