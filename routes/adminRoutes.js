@@ -1,12 +1,12 @@
 const express = require("express");
 const router = express.Router();
 
-// 1. Fixed Middleware paths (Removed the 's' and matched your actual folders)
+// 1. Fixed Middleware paths
 const { requireAuth, requireRole } = require('../middleware/authMiddleware');
 const { requireAdmin, requireSuperAdmin } = require("../routes/adminAuth"); 
 const adminController = require("../controllers/adminController");
 
-// 2. Fixed asyncHandler path (Pointed it to the root or middleware folder where it actually lives)
+// 2. Fixed asyncHandler path
 const asyncHandler = require("../middleware/asyncHandler");
 
 router.use(requireAuth);
@@ -20,6 +20,7 @@ router.get("/quizzes", asyncHandler(adminController.getQuizzes));
 router.post("/quizzes", asyncHandler(adminController.createQuiz));
 router.post("/quizzes/bulk-parse", asyncHandler(adminController.bulkParseQuiz));
 router.post("/quizzes/bulk-publish", asyncHandler(adminController.bulkPublishQuiz));
+router.post("/quizzes/generate-quiz", asyncHandler(adminController.generateQuestionsAI)); // <-- NEW AI ROUTE
 router.put("/quizzes/:id", asyncHandler(adminController.updateQuiz));
 router.patch("/quizzes/:id/status", asyncHandler(adminController.updateQuizStatus));
 router.delete("/quizzes/:id", asyncHandler(adminController.deleteQuiz));
