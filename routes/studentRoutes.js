@@ -1,7 +1,7 @@
 const express = require("express");
 const asyncHandler = require("../middleware/asyncHandler");
 const { requireAuth, requireRole } = require("../middleware/authMiddleware");
-const { listAvailableQuizzes, getQuizDetails, startQuiz, submitQuiz, getAIFeedback } = require("../controllers/studentController");
+const { listAvailableQuizzes, getQuizDetails, startQuiz, submitQuiz, getAIFeedback, generatePracticeQuiz } = require("../controllers/studentController");
 const { getProfile, getLiveDashboardStats, updateProfile } = require("../controllers/profileController");
 const multer = require("multer");
 
@@ -28,5 +28,6 @@ router.get("/attempt/:attemptId/feedback", asyncHandler(getAIFeedback));
 router.get("/profile", asyncHandler(getProfile));
 router.put("/profile", upload.single("avatar"), asyncHandler(updateProfile));
 router.get("/dashboard/live-stats", asyncHandler(getLiveDashboardStats));
+router.post("/practice-quiz", asyncHandler(generatePracticeQuiz)); // <-- NEW ROUTE
 
 module.exports = router;
